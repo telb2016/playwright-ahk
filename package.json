@@ -1,0 +1,19 @@
+{
+  "name": "playwright-ahk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AutoHotkey wrappers around official Playwright stable (npx playwright)",
+  "scripts": {
+    "test": "playwright test",
+    "codegen": "playwright codegen",
+    "install-browsers": "playwright install",
+    "show-report": "playwright show-report",
+    "show-trace": "playwright show-trace"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
