@@ -109,7 +109,7 @@ scripts/puzzle-pieces.json     ← Tab 2 catalog (repo root)
 - **Ini persistence** — canvas + last terminal snippet (+ prompt, active tab, window size + position).
 - **Run elapsed** — status bar shows live seconds while Copilot / puzzle jobs run.
 - **InvestorDemo** — `Ctrl+Alt+0` launches overnight GUI.
-- Save / Default canvas; dark confirms; Ctrl+S + 60s autosave; chip filter; copy terminal; open repo folder.
+- Save / Default canvas; dark confirms; Ctrl+S + 60s autosave; chip filter (persisted); copy terminal; open repo folder; tray tips on job finish.
 
 ### Earlier (PR #3 — merged)
 - **Train wipe** — custom tabs + animated train banner on Tab1↔Tab2 (no raw Tab3 blink).

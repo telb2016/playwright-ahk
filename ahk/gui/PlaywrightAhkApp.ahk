@@ -63,6 +63,7 @@ if Trim(EdCanvas.Value) = "" {
     RefreshCanvasEdit()
 }
 ShowTab(ActiveTab, true)
+try OnChipFilterChange()
 SetStatus("Ready — repo root: " RepoRoot)
 showOpts := "w" LastWinW " h" LastWinH
 if LastWinX != "" && LastWinY != ""
@@ -581,6 +582,7 @@ PollCopilot() {
     try BtnCancelCopilot.Enabled := false
     elapsed := Round((A_TickCount - JobStartCopilot) / 1000)
     SetStatus((code = 0 ? "Copilot finished OK" : "Copilot finished exit " code) "  (" elapsed "s)")
+    try TrayTip("Copilot", (code = 0 ? "Finished OK" : "Exit " code) " (" elapsed "s)", code = 0 ? "Iconi" : "Iconx")
     CopilotJob := ""
     SaveIniAll()
 }
@@ -622,8 +624,8 @@ OnChipDragHover(over) {
 }
 
 ChipDragCanStart() {
-    global ActiveTab
-    return ActiveTab = 2
+    global ActiveTab, BusyPuzzle
+    return ActiveTab = 2 && !BusyPuzzle
 }
 
 OnPuzzleClear(*) {
@@ -767,6 +769,7 @@ PollPuzzle() {
     try BtnCancelPuzzle.Enabled := false
     elapsed := Round((A_TickCount - JobStartPuzzle) / 1000)
     SetStatus((code = 0 ? "Puzzle run OK" : "Puzzle stopped — exit " code) "  (" elapsed "s)")
+    try TrayTip("Puzzle run", (code = 0 ? "OK" : "Stopped exit " code) " (" elapsed "s)", code = 0 ? "Iconi" : "Iconx")
     PuzzleJob := ""
     SaveIniAll()
 }
@@ -791,7 +794,7 @@ IniUnescape(s) {
 }
 
 LoadIniAll() {
-    global EdPrompt, EdCanvas, EdTerminal, IniPath, ActiveTab, LastWinW, LastWinH, LastWinX, LastWinY, Canvas
+    global EdPrompt, EdCanvas, EdTerminal, EdChipFilter, IniPath, ActiveTab, LastWinW, LastWinH, LastWinX, LastWinY, Canvas
     if !FileExist(IniPath)
         return
     try {
@@ -828,6 +831,12 @@ LoadIniAll() {
         }
     }
     try {
+        filt := IniRead(IniPath, "Puzzle", "ChipFilter", "")
+        if filt != "" {
+            EdChipFilter.Value := filt
+        }
+    }
+    try {
         xs := IniRead(IniPath, "UI", "X", "")
         ys := IniRead(IniPath, "UI", "Y", "")
         if xs != "" && ys != "" {
@@ -838,10 +847,11 @@ LoadIniAll() {
 }
 
 SaveIniAll() {
-    global EdPrompt, EdCanvas, EdTerminal, IniPath, ActiveTab, LastWinW, LastWinH, LastWinX, LastWinY, AppGui
+    global EdPrompt, EdCanvas, EdTerminal, EdChipFilter, IniPath, ActiveTab, LastWinW, LastWinH, LastWinX, LastWinY, AppGui
     try {
         IniWrite(IniEscape(EdPrompt.Value), IniPath, "Copilot", "LastPrompt")
         IniWrite(IniEscape(EdCanvas.Value), IniPath, "Puzzle", "Canvas")
+        try IniWrite(EdChipFilter.Value, IniPath, "Puzzle", "ChipFilter")
         ; Cap terminal snippet so ini stays modest (~48 KB chars)
         term := EdTerminal.Value
         if StrLen(term) > 48000

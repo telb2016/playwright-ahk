@@ -8,7 +8,8 @@
 #SingleInstance Force
 #Include Playwright.ahk
 
-TrayTip("InvestorDemo", "Hotkeys armed:`nCtrl+Alt+1 Test`nCtrl+Alt+2 Codegen`nCtrl+Alt+3 ShowReport`nCtrl+Alt+0 Overnight GUI", "Iconi")
+A_IconTip := "InvestorDemo — Playwright wrap fork"
+TrayTip("InvestorDemo", "Hotkeys armed:`nCtrl+Alt+1 Test`nCtrl+Alt+2 Codegen`nCtrl+Alt+3 ShowReport`nCtrl+Alt+0 Overnight GUI`n(Ctrl+Alt+P = GUI tray focus)", "Iconi")
 
 ^!1:: {
     try {
@@ -46,6 +47,7 @@ TrayTip("InvestorDemo", "Hotkeys armed:`nCtrl+Alt+1 Test`nCtrl+Alt+2 Codegen`nCt
         MsgBox("Missing: " guiScript, "InvestorDemo — GUI launch", "Iconx")
         return
     }
+    ; SingleInstance on the GUI script will focus existing instance
     Run('"' A_AhkPath '" "' guiScript '"')
-    TrayTip("Overnight GUI", "Launched PlaywrightAhkApp`nCtrl+Alt+P show/focus", "Iconi")
+    TrayTip("Overnight GUI", "Launched PlaywrightAhkApp`nCtrl+Alt+P show/focus · close hides to tray", "Iconi")
 }
