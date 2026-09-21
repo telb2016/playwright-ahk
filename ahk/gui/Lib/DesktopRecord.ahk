@@ -2,7 +2,7 @@
 ; Kind: windows-uia. NEVER feeds Playwright / @playwright/test.
 #Requires AutoHotkey v2.0
 #Include UiaCore.ahk
-#Include Json.ahk
+; Json.ahk must be included by the host script before this file.
 
 class DesktopRecord {
     static Kind := "windows-uia"

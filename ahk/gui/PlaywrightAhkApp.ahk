@@ -674,6 +674,17 @@ ShowTab(n, updateButtons := true) {
     ; Re-apply chip filter after bulk Visible toggles
     if n = 2
         OnChipFilterChange()
+    if n = 3
+        EnsureDesktopJsonTemplate()
+}
+
+EnsureDesktopJsonTemplate() {
+    global EdDesktopJson, Desktop
+    if Trim(EdDesktopJson.Value) != ""
+        return
+    ; Empty starter so kind boundary is obvious in the editor
+    EdDesktopJson.Value := '{ "version": 1, "kind": "windows-uia", "steps": [] }'
+    try Desktop.LoadJson(EdDesktopJson.Value)
 }
 
 ApplyChrome(w, h) {
