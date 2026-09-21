@@ -17,6 +17,7 @@ class Theme {
     static Train := "0A4D73"
     static DropTarget := "264F78"
     static DropTargetFg := "9CDCFE"
+    static ErrBg := "3A1D1D"
 
     ; Prefer immersive dark titlebar (Win10 1903+ / Win11). Falls back silently.
     static ApplyDarkTitleBar(hwnd) {
@@ -78,6 +79,20 @@ class Theme {
         try ctrl.SetFont("s9 c" Theme.FgDim, "Segoe UI")
     }
 
+    static StyleStatusTone(ctrl, tone := "") {
+        if !IsObject(ctrl)
+            return
+        if tone = "ok" {
+            ctrl.Opt("Background" Theme.BgPanel " c" Theme.Ok)
+            try ctrl.SetFont("s9 c" Theme.Ok, "Segoe UI")
+        } else if tone = "err" {
+            ctrl.Opt("Background" Theme.BgPanel " c" Theme.Err)
+            try ctrl.SetFont("s9 c" Theme.Err, "Segoe UI")
+        } else {
+            Theme.StyleStatus(ctrl)
+        }
+    }
+
     static StyleTabBtn(ctrl, active := false) {
         if active
             ctrl.Opt("Background" Theme.Accent " cFFFFFF")
@@ -94,6 +109,17 @@ class Theme {
             ctrl.Opt("Background" Theme.DropTarget " c" Theme.DropTargetFg)
         else
             Theme.StyleEdit(ctrl)
+    }
+
+    ; Brief OK / error flash on an Edit (e.g. canvas after successful drop).
+    static FlashEdit(ctrl, ok := true, ms := 220) {
+        if !IsObject(ctrl)
+            return
+        if ok
+            ctrl.Opt("Background" Theme.DropTarget " c" Theme.DropTargetFg)
+        else
+            ctrl.Opt("Background" Theme.ErrBg " c" Theme.Err)
+        SetTimer(() => Theme.StyleEdit(ctrl), -Max(ms, 80))
     }
 
     ; Dark Yes/No confirm. Returns true if Yes. Default focus = No (safer).
@@ -129,5 +155,43 @@ class Theme {
         try btnNo.Focus()
         WinWaitClose("ahk_id " hwnd)
         return result
+    }
+
+
+    ; Dark OK-only info dialog.
+    static InfoDark(message, title := "Playwright AHK", ownerHwnd := 0) {
+        done := false
+        opts := "+AlwaysOnTop -MinimizeBox -MaximizeBox +MinSize380x140"
+        if ownerHwnd
+            opts .= " +Owner" ownerHwnd
+        g := Gui(opts, title)
+        Theme.StyleGui(g)
+        g.MarginX := 16
+        g.MarginY := 14
+        g.Add("Text", "w360 c" Theme.Fg, message)
+        btn := g.Add("Button", "xm w100 h30 Default", "OK")
+        Theme.StyleButton(btn, true)
+        Finish(*) {
+            if done
+                return
+            done := true
+            g.Destroy()
+        }
+        btn.OnEvent("Click", Finish)
+        g.OnEvent("Close", Finish)
+        g.OnEvent("Escape", Finish)
+        hwnd := g.Hwnd
+        Theme.ApplyDarkTitleBar(hwnd)
+        g.Show("w400")
+        try btn.Focus()
+        WinWaitClose("ahk_id " hwnd)
+    }
+
+
+    static StyleCheck(ctrl) {
+        if !IsObject(ctrl)
+            return
+        try ctrl.Opt("c" Theme.Fg)
+        try ctrl.SetFont("s9 c" Theme.Fg, "Segoe UI")
     }
 }

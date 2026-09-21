@@ -14,6 +14,9 @@ class ChipDrag {
     static SuppressClick := false
     static HookInstalled := false
     static LastOver := false
+    static LastTip := ""
+    static OwnerHwnd := 0        ; main app hwnd — cancel if focus leaves app/ghost
+    static FocusMisses := 0      ; grace: ToolTip/transient windows can steal focus briefly
 
     static RegisterChip(hwnd, piece) {
         if hwnd
@@ -22,6 +25,10 @@ class ChipDrag {
 
     static SetCanvas(hwnd) {
         ChipDrag.CanvasHwnd := hwnd
+    }
+
+    static SetOwner(hwnd) {
+        ChipDrag.OwnerHwnd := hwnd
     }
 
     ; onDropCb(piece), optional onHoverCb(over), optional canStartCb()
@@ -39,6 +46,9 @@ class ChipDrag {
     static OnLButtonDown(wParam, lParam, msg, hwnd) {
         if !ChipDrag.ChipHwnds.Has(hwnd)
             return
+        ; Already dragging — ignore nested downs
+        if IsObject(ChipDrag.State)
+            return
         can := ChipDrag.CanStart
         if can && !can.Call()
             return
@@ -52,6 +62,8 @@ class ChipDrag {
             hwnd: hwnd
         }
         ChipDrag.LastOver := false
+        ChipDrag.LastTip := ""
+        ChipDrag.FocusMisses := 0
         SetTimer(ChipDrag.Poll, 16)
     }
 
@@ -72,6 +84,18 @@ class ChipDrag {
             ChipDrag.Cancel()
             return
         }
+        ; Cancel if owner app lost foreground (alt-tab / tray hide).
+        ; Allow a few misses — AHK ToolTip / DWM can briefly steal focus.
+        if ChipDrag.OwnerHwnd && !ChipDrag.FocusInApp() {
+            ChipDrag.FocusMisses += 1
+            if ChipDrag.FocusMisses >= 12 {  ; ~200ms at 16ms poll
+                SetTimer(ChipDrag.Poll, 0)
+                ChipDrag.Cancel()
+                return
+            }
+        } else {
+            ChipDrag.FocusMisses := 0
+        }
         MouseGetPos(&mx, &my)
         if !st.dragging {
             dx := Abs(mx - st.startX)
@@ -89,16 +113,45 @@ class ChipDrag {
                 if hover
                     hover.Call(over)
             }
-            if over
-                ToolTip("Release to drop on canvas")
-            else
-                ToolTip("Drag to canvas · Esc cancels")
+            tip := over ? "Release to drop on canvas" : "Drag to canvas · Esc cancels"
+            if tip != ChipDrag.LastTip {
+                ChipDrag.LastTip := tip
+                ToolTip(tip)
+            }
         }
+    }
+
+    static FocusInApp() {
+        owner := ChipDrag.OwnerHwnd
+        if !owner
+            return true
+        try {
+            active := WinGetID("A")
+            if !active
+                return true
+            if active = owner
+                return true
+            g := ChipDrag.Ghost
+            if IsObject(g) && active = g.Hwnd
+                return true
+            ; Child of owner?
+            hwnd := active
+            loop 8 {
+                parent := DllCall("user32\GetParent", "ptr", hwnd, "ptr")
+                if !parent
+                    break
+                if parent = owner
+                    return true
+                hwnd := parent
+            }
+        }
+        return false
     }
 
     static EndDrag() {
         st := ChipDrag.State
         ChipDrag.State := ""
+        ChipDrag.LastTip := ""
         ToolTip()
         wasDragging := IsObject(st) && st.dragging
         ChipDrag.HideGhost()
@@ -109,7 +162,8 @@ class ChipDrag {
         if !wasDragging
             return
         ChipDrag.SuppressClick := true
-        SetTimer(() => (ChipDrag.SuppressClick := false), -400)
+        ; Longer suppress so SlotEditor modal click doesn't re-fire chip Click
+        SetTimer(() => (ChipDrag.SuppressClick := false), -800)
         if ChipDrag.IsOverCanvas() && IsObject(st.piece) {
             cb := ChipDrag.OnDrop
             if cb
@@ -167,6 +221,9 @@ class ChipDrag {
     static ShowGhost(piece, mx, my) {
         ChipDrag.HideGhost()
         label := piece.Has("label") ? piece["label"] : "piece"
+        ; Truncate long labels so ghost stays compact
+        if StrLen(label) > 36
+            label := SubStr(label, 1, 33) "…"
         g := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20 +Border")
         g.BackColor := Theme.Accent
         g.MarginX := 8
@@ -191,6 +248,7 @@ class ChipDrag {
             try g.Destroy()
         }
         ToolTip()
+        ChipDrag.LastTip := ""
     }
 
     static Cancel() {
@@ -199,12 +257,17 @@ class ChipDrag {
         SetTimer(ChipDrag.Poll, 0)
         ChipDrag.State := ""
         ChipDrag.SuppressClick := true
-        SetTimer(() => (ChipDrag.SuppressClick := false), -400)
+        SetTimer(() => (ChipDrag.SuppressClick := false), -800)
         ChipDrag.HideGhost()
         hover := ChipDrag.OnHover
         if hover
             hover.Call(false)
         ChipDrag.LastOver := false
         return true
+    }
+
+    ; True while a drag gesture is active (past threshold or not).
+    static IsDragging() {
+        return IsObject(ChipDrag.State)
     }
 }

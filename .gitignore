@@ -8,3 +8,8 @@ recordings/*.spec.js
 recordings/**/*.spec.js
 !recordings/.gitkeep
 !recordings/archive/.gitkeep
+
+# Windows desktop UIA recordings (Tab 3) — keep folder, ignore payloads
+recordings/windows/*
+!recordings/windows/.gitkeep
+!recordings/windows/README.txt

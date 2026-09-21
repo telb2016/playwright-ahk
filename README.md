@@ -32,3 +32,14 @@ The sample opens `https://playwright.dev` in Chromium and checks the accessible 
 ## AHK
 
 See `ahk/` — wrappers call `npx playwright` with the pinned local install.
+
+## Overnight GUI (AHK v2)
+
+Three-tab AutoHotkey front-end (Copilot · Playwright CLI puzzle · **Windows Desktop UIA**).
+
+**60-second morning handoff** (cold Windows box): see [`ahk/gui/README.md`](ahk/gui/README.md).
+
+```text
+ahk\gui\PlaywrightAhkApp.ahk
+```
+
