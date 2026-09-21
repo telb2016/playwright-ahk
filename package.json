@@ -13,6 +13,7 @@
     "test:workers1": "playwright test --workers=1",
     "test:html": "playwright test --reporter=html",
     "codegen": "playwright codegen",
+    "codegen:record": "node scripts/codegen-record.js",
     "install-browsers": "playwright install",
     "install:chromium": "playwright install chromium",
     "install-deps": "playwright install-deps",

@@ -3,6 +3,19 @@
   "prefix": ["npx", "--no-install", "playwright"],
   "cwd": "repo-root",
   "nodeEngines": ">=20",
+  "recordHandoff": {
+    "npmScript": "codegen:record",
+    "command": ["npm", "run", "codegen:record", "--"],
+    "optionalUrlArg": true,
+    "outputFile": "recordings/latest.spec.js",
+    "archiveDir": "recordings/archive",
+    "waitForExitBeforeRead": true,
+    "target": "playwright-test",
+    "copilotPromptSeed": [
+      "This is a Playwright test recording — keep @playwright/test + getByRole where possible.",
+      "User instruction follows the fenced script."
+    ]
+  },
   "pieces": [
     { "id": 1, "label": "test", "argv": ["test"], "npmScript": "test", "slots": [] },
     { "id": 2, "label": "test --ui", "argv": ["test", "--ui"], "npmScript": "test:ui", "slots": [] },
@@ -14,6 +27,7 @@
     { "id": 8, "label": "test --workers=1", "argv": ["test", "--workers=1"], "npmScript": "test:workers1", "slots": [] },
     { "id": 9, "label": "test --reporter=html", "argv": ["test", "--reporter=html"], "npmScript": "test:html", "slots": [] },
     { "id": 10, "label": "codegen", "argv": ["codegen"], "npmScript": "codegen", "slots": [{ "name": "url", "required": true, "position": "trailing" }] },
+    { "id": 21, "label": "Record (headed → latest.spec.js)", "argv": ["codegen", "--target=playwright-test", "-o", "recordings/latest.spec.js"], "npmScript": "codegen:record", "slots": [{ "name": "url", "required": false, "position": "trailing" }], "recordHandoff": true },
     { "id": 11, "label": "install", "argv": ["install"], "npmScript": "install-browsers", "slots": [] },
     { "id": 12, "label": "install chromium", "argv": ["install", "chromium"], "npmScript": "install:chromium", "slots": [] },
     { "id": 13, "label": "install-deps", "argv": ["install-deps"], "npmScript": "install-deps", "slots": [] },
