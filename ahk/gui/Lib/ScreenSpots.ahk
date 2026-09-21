@@ -131,6 +131,12 @@ class ScreenSpots {
 
     static SampleAll(hwnd) {
         spots := []
+        if !hwnd
+            return spots
+        try {
+            if DllCall("user32\IsIconic", "ptr", hwnd)
+                return spots
+        }
         for a in ScreenSpots.Anchors {
             s := ScreenSpots.SampleColorAtClientPct(hwnd, a[1], a[2])
             if s != ""
