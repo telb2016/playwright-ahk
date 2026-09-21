@@ -352,6 +352,9 @@ BuildGui() {
         btn := AppGui.Add("Button", "x" x " y" y " w" (colW - 8) " h26", piece["label"])
         Theme.StyleChip(btn)
         btn.OnEvent("Click", ChipClick.Bind(piece))
+        tip := ChipTooltipFor(piece)
+        try btn.ToolTip := tip
+        btn.OnEvent("ContextMenu", ChipContextMenu.Bind(piece))
         ChipDrag.RegisterChip(btn.Hwnd, piece)
         chipCtrls.Push(btn)
         ChipBtns.Push({ btn: btn, piece: piece, label: piece["label"], x: x, y: y })
@@ -421,6 +424,8 @@ BuildGui() {
 
     StatusBar := AppGui.Add("Text", "x10 y675 w960 h24", " Ready")
     Theme.StyleStatus(StatusBar)
+    StatusBar.OnEvent("Click", OnStatusBarClick)
+    StatusBar.OnEvent("DoubleClick", OnStatusBarClick)
 
     ; Train-wipe overlay (child of main GUI; hidden until tab switch)
     WipeGui := Gui("+Parent" AppGui.Hwnd " -Caption +ToolWindow -Border")
@@ -990,7 +995,7 @@ IniUnescape(s) {
 }
 
 LoadIniAll() {
-    global EdPrompt, EdCanvas, EdTerminal, EdChipFilter, EdRecordInstr, EdRecordUrl, EdRecording, IniPath, ActiveTab, LastWinW, LastWinH, LastWinX, LastWinY, Canvas, RepoRoot, LastSavedSpec, BtnRunSavedTest
+    global EdPrompt, EdReply, EdCanvas, EdTerminal, EdChipFilter, EdRecordInstr, EdRecordUrl, EdRecording, IniPath, ActiveTab, LastWinW, LastWinH, LastWinX, LastWinY, Canvas, RepoRoot, LastSavedSpec, BtnRunSavedTest
     if !FileExist(IniPath)
         return
     try {
@@ -998,6 +1003,12 @@ LoadIniAll() {
         p := IniUnescape(p)
         if p != ""
             EdPrompt.Value := p
+    }
+    try {
+        r := IniRead(IniPath, "Copilot", "LastReply", "")
+        r := IniUnescape(r)
+        if r != ""
+            EdReply.Value := r
     }
     try {
         ri := IniRead(IniPath, "Record", "Instruction", "")
@@ -1066,9 +1077,15 @@ LoadIniAll() {
 }
 
 SaveIniAll() {
-    global EdPrompt, EdCanvas, EdTerminal, EdChipFilter, EdRecordInstr, EdRecordUrl, IniPath, ActiveTab, LastWinW, LastWinH, LastWinX, LastWinY, AppGui, LastSavedSpec
+    global EdPrompt, EdReply, EdCanvas, EdTerminal, EdChipFilter, EdRecordInstr, EdRecordUrl, IniPath, ActiveTab, LastWinW, LastWinH, LastWinX, LastWinY, AppGui, LastSavedSpec
     try {
         IniWrite(IniEscape(EdPrompt.Value), IniPath, "Copilot", "LastPrompt")
+        try {
+            reply := EdReply.Value
+            if StrLen(reply) > 48000
+                reply := SubStr(reply, -47999)
+            IniWrite(IniEscape(reply), IniPath, "Copilot", "LastReply")
+        }
         try IniWrite(IniEscape(EdRecordInstr.Value), IniPath, "Record", "Instruction")
         try IniWrite(EdRecordUrl.Value, IniPath, "Record", "Url")
         try {
@@ -1158,7 +1175,7 @@ OnOpenRepoFolder(*) {
 ; ---------- Record → file → Copilot ----------
 
 OnRecordStart(*) {
-    global RepoRoot, EdRecordUrl, BusyRecord, RecordJob, BtnRecord, EdRecording, ActiveTab, BusyCopilot
+    global RepoRoot, EdRecordUrl, BusyRecord, RecordJob, BtnRecord, BtnCancelRecord, EdRecording, ActiveTab, BusyCopilot
     if ActiveTab != 1 {
         RequestTab(1)
     }
@@ -1216,7 +1233,7 @@ OnRecordCancelClick(*) {
 }
 
 PollRecordExit() {
-    global RecordJob, BusyRecord, BtnRecord, EdRecording, RepoRoot
+    global RecordJob, BusyRecord, BtnRecord, BtnCancelRecord, EdRecording, RepoRoot
     if !IsObject(RecordJob) {
         SetTimer(PollRecordExit, 0)
         BusyRecord := false
@@ -1364,6 +1381,19 @@ OnOpenRecordingsFolder(*) {
     SetStatus("Opened recordings folder")
 }
 
+
+OnStatusBarClick(*) {
+    global StatusBar
+    try {
+        msg := Trim(StatusBar.Value)
+        if msg = ""
+            return
+        A_Clipboard := msg
+        ; brief acknowledge without clobbering for long
+        ToolTip("Status copied")
+        SetTimer(() => ToolTip(), -900)
+    }
+}
 
 ScrollEditToEnd(ctrl) {
     if !IsObject(ctrl)

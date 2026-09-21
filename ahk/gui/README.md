@@ -128,6 +128,8 @@ scripts/puzzle-pieces.json     ← Tab 2 catalog (repo root)
 - Status bar OK/err tone; canvas flash on drop/block; terminal auto-scroll during puzzle run.
 - Record **Cancel** button; filter **Clear** (`Ctrl+L`); reload latest (`Ctrl+R`).
 - Tray Exit confirms when jobs busy; block Send/Run during train wipe.
+- Chip hover tooltips + right-click copies argv; click status bar to copy message.
+- Stronger incomplete-slot heuristics (`--grep=""`, screenshot/pdf missing out).
 
 ### PR #4 — `ahk/overnight-polish` (merged)
 - **Chip→canvas drag-drop** — drag chips onto the canvas (ghost + drop target); click-to-add kept as fallback; Esc cancels drag; canvas highlights while hovered.
@@ -152,6 +154,7 @@ scripts/puzzle-pieces.json     ← Tab 2 catalog (repo root)
 | Section | Key | Purpose |
 |---------|-----|---------|
 | Copilot | LastPrompt | Tab 1 prompt (`\n` escaped) |
+| Copilot | LastReply | Tab 1 reply (capped ~48k) |
 | Puzzle | Canvas | Command canvas text |
 | Puzzle | LastTerminal | Last terminal mirror (capped ~48k) |
 | Puzzle | ChipFilter | Piece filter substring |

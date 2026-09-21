@@ -232,12 +232,14 @@ class PuzzleCanvas {
     }
 
     HasEmptySlotsInText(text) {
-        ; Heuristic: trailing = with nothing after (--grep=) or dangling required placeholders
+        ; Heuristic: empty --grep= / dangling interactive verbs / screenshot|pdf missing out
         for line in this.LinesFromText(text) {
-            if RegExMatch(line, "--grep=\s*$")
+            if RegExMatch(line, "--grep=\s*$") || RegExMatch(line, '--grep=""\s*$') || RegExMatch(line, "--grep=''\s*$")
                 return true
             if RegExMatch(line, "i)\b(codegen|open|show-trace|screenshot|pdf)\s*$")
-                return true  ; verb alone without trailing args when slots required
+                return true
+            if RegExMatch(line, "i)\b(screenshot|pdf)\s+\S+\s*$") && !RegExMatch(line, "i)\b(screenshot|pdf)\s+\S+\s+\S+")
+                return true
         }
         return false
     }
