@@ -84,7 +84,7 @@ Do **not** run GUI shells from `ahk\gui\` alone — working directory is always 
 - Empty canvas / incomplete slots (e.g. `--grep=` with no value) **block Run**.
 - Helpers: Clear · Default · Backspace · Copy command · Save · Copy/Clear terminal · Open repo folder.
 - Piece **Filter** box hides non-matching chips (status debounced while typing).
-- `F5` Run · `Delete` Backspace · `Ctrl+S` save · `Ctrl+1`/`Ctrl+2` tabs · `Ctrl+Shift+C` copy cmd · `Ctrl+Shift+T` copy terminal · autosave 60s.
+- `F5` Run · `Delete` Backspace · `Ctrl+S` save · `Ctrl+1`/`Ctrl+2`/`Ctrl+3` tabs · `Ctrl+Shift+C` copy cmd · `Ctrl+Shift+T` copy terminal · autosave 60s.
 
 Default first drop: piece flagged `defaultFirstDrop` → `test --project=chromium` (skipped when a saved canvas is restored from ini).
 
@@ -102,7 +102,7 @@ Bulletproof **AutoHotkey + UI Automation** recorder for the Windows machine itse
 - **Send desktop → Copilot** — seeds *AutoHotkey + UI Automation* — **never** `@playwright/test`. Separate from Tab 1 browser Record pane.
 - **Boundary** — Tab 3 never pipes into `npx playwright` / codegen / Save as test.
 
-Controls: **Record · Stop · Play · Verify · Save · Clear · Send desktop → Copilot**. Hotkey `Ctrl+3`.
+Controls: **Record · Stop · Play · Verify · Save · Folder · Clear · Probe · Send desktop → Copilot**. Hotkey `Ctrl+3`. Right-click is recorded; **Probe** dumps ranked targets under the cursor.
 
 ## UX polish
 
