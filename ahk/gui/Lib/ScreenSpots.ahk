@@ -242,7 +242,12 @@ class ScreenSpots {
         if passRatio <= 0
             passRatio := pack.Has("passRatio") ? Float(pack["passRatio"]) : ScreenSpots.DefaultPassRatio
 
-        settled := ScreenSpots.SettleAndSample(hwnd)
+        settleMs := pack.Has("settleMs") ? Integer(pack["settleMs"]) : ScreenSpots.SettleMs
+        if settleMs < 150
+            settleMs := 150
+        if settleMs > 400
+            settleMs := 400
+        settled := ScreenSpots.SettleAndSample(hwnd, settleMs)
         if !settled.ok {
             return { ok: false, message: "spot settle failed on playback: " settled.message, passed: 0, total: pack["spots"].Length, soft: false }
         }
