@@ -3,16 +3,23 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 #Warn
+Persistent
 
 #Include Lib\Theme.ahk
 #Include Lib\ShellExec.ahk
 #Include Lib\Json.ahk
 #Include Lib\PuzzlePieces.ahk
+#Include Lib\SlotEditor.ahk
+#Include Lib\ChipDrag.ahk
+#Include Lib\RecordSession.ahk
 #Include ..\Playwright.ahk
 
 global AppGui, StatusBar
 global RepoRoot
 global EdPrompt, EdReply, BtnSend, BtnCancelCopilot, BtnUseReply
+global EdRecording, EdRecordUrl, EdRecordInstr, BtnRecord, BtnSendRecording
+global BtnSaveAsTest, BtnRunSavedTest, LblRecording
+global RecordJob, BusyRecord, LastSavedSpec
 global EdCanvas, EdTerminal, BtnRun, BtnCancelPuzzle
 global Catalog, Canvas
 global CopilotJob, PuzzleJob
@@ -21,7 +28,10 @@ global BusyCopilot, BusyPuzzle
 global ActiveTab, BtnTab1, BtnTab2
 global Tab1Ctrls, Tab2Ctrls
 global WipeGui, WipeLbl, WipeActive, WipeDir, WipeStep, WipeTarget
-global LastWinW, LastWinH
+global LastWinW, LastWinH, LastWinX, LastWinY
+global AppVisible
+global ChipBtns, EdChipFilter
+global JobStartCopilot, JobStartPuzzle
 
 CopilotJob := ""
 PuzzleJob := ""
@@ -34,33 +44,112 @@ WipeActive := false
 WipeDir := 1
 WipeStep := 0
 WipeTarget := 1
-LastWinW := 980
+LastWinW := 1180
 LastWinH := 720
+LastWinX := ""
+LastWinY := ""
+AppVisible := true
+ChipBtns := []
+JobStartCopilot := 0
+JobStartPuzzle := 0
+RecordJob := ""
+BusyRecord := false
+LastSavedSpec := ""
 
 RepoRoot := ShellExec.ResolveRepoRoot(A_ScriptFullPath)
+try RecordSession.EnsureDirs(RepoRoot)
 IniPath := A_ScriptDir "\PlaywrightAhkApp.ini"
 Catalog := PuzzlePieces.Load(RepoRoot)
 Canvas := PuzzleCanvas(Catalog)
 
+SetupTray()
 BuildGui()
 Theme.ApplyDarkTitleBar(AppGui.Hwnd)
-LoadIniPrompt()
-Canvas.SeedDefault()
-RefreshCanvasEdit()
-ShowTab(1, false)
+LoadIniAll()
+if Trim(EdCanvas.Value) = "" {
+    Canvas.SeedDefault()
+    RefreshCanvasEdit()
+}
+ShowTab(ActiveTab, true)
+try OnChipFilterChange()
 SetStatus("Ready — repo root: " RepoRoot)
-AppGui.Show("w980 h720")
-ApplyChrome(980, 720)
+showOpts := "w" LastWinW " h" LastWinH
+if LastWinX != "" && LastWinY != ""
+    showOpts .= " x" LastWinX " y" LastWinY
+AppGui.Show(showOpts)
+ApplyChrome(LastWinW, LastWinH)
+; Global show/focus hotkey
+Hotkey("^!p", ToggleShowFocus)
 return
+
+SetupTray() {
+    A_IconTip := "Playwright AHK — Overnight GUI"
+    try TraySetIcon(A_AhkPath, 1)
+    A_TrayMenu.Delete()
+    A_TrayMenu.Add("&Show / Focus`tCtrl+Alt+P", (*) => ToggleShowFocus())
+    A_TrayMenu.Add()
+    A_TrayMenu.Add("Copilot studio", (*) => (ShowAndFocus(), RequestTab(1)))
+    A_TrayMenu.Add("CLI puzzle", (*) => (ShowAndFocus(), RequestTab(2)))
+    A_TrayMenu.Add()
+    A_TrayMenu.Add("E&xit", OnTrayExit)
+    A_TrayMenu.Default := "&Show / Focus`tCtrl+Alt+P"
+    A_TrayMenu.ClickCount := 1
+}
+
+OnTrayExit(*) {
+    SaveIniAll()
+    OnCopilotCancel()
+    OnPuzzleCancel()
+    OnRecordCancel()
+    ExitApp()
+}
+
+ToggleShowFocus(*) {
+    global AppGui, AppVisible
+    if !AppVisible || !WinExist("ahk_id " AppGui.Hwnd) {
+        ShowAndFocus()
+        return
+    }
+    if WinActive("ahk_id " AppGui.Hwnd) {
+        HideToTray()
+    } else {
+        ShowAndFocus()
+    }
+}
+
+ShowAndFocus() {
+    global AppGui, AppVisible, LastWinW, LastWinH, LastWinX, LastWinY
+    AppVisible := true
+    try {
+        showOpts := "w" LastWinW " h" LastWinH
+        if LastWinX != "" && LastWinY != ""
+            showOpts .= " x" LastWinX " y" LastWinY
+        AppGui.Show(showOpts)
+        WinActivate("ahk_id " AppGui.Hwnd)
+        ApplyChrome(LastWinW, LastWinH)
+    }
+    SetStatus("Focused — Ctrl+Alt+P toggles tray")
+}
+
+HideToTray() {
+    global AppGui, AppVisible
+    SaveIniAll()
+    AppVisible := false
+    try AppGui.Hide()
+    TrayTip("Playwright AHK", "Hidden to tray — Ctrl+Alt+P to restore", "Iconi")
+}
 
 BuildGui() {
     global AppGui, StatusBar
     global EdPrompt, EdReply, BtnSend, BtnCancelCopilot, BtnUseReply
+global EdRecording, EdRecordUrl, EdRecordInstr, BtnRecord, BtnSendRecording
+global BtnSaveAsTest, BtnRunSavedTest, LblRecording
+global RecordJob, BusyRecord, LastSavedSpec
     global EdCanvas, EdTerminal, BtnRun, BtnCancelPuzzle
-    global Catalog, Tab1Ctrls, Tab2Ctrls
+    global Catalog, Tab1Ctrls, Tab2Ctrls, ChipBtns, EdChipFilter
     global BtnTab1, BtnTab2, WipeGui, WipeLbl
 
-    AppGui := Gui("+Resize +MinSize820x600", "Playwright AHK — Overnight GUI")
+    AppGui := Gui("+Resize +MinSize1000x640", "Playwright AHK — Overnight GUI")
     Theme.StyleGui(AppGui)
     AppGui.OnEvent("Close", OnAppClose)
     AppGui.OnEvent("Escape", OnEsc)
@@ -76,49 +165,96 @@ BuildGui() {
     BtnTab2.OnEvent("Click", (*) => RequestTab(2))
 
     AppGui.Add("Text", "x490 y18 w470 c" Theme.FgDim,
-        "Train wipe on tab switch · Ctrl+Enter Send · F5 Run · Del Backspace piece")
+        "Drag chips → canvas · Ctrl+Alt+P tray · Ctrl+S save · Ctrl+Enter Send · F5 Run")
 
-    ; ----- Tab 1 content -----
-    t1Hint := AppGui.Add("Text", "x24 y56 w900 c" Theme.FgDim,
-        "Compose a prompt, Send via copilot -p ... --allow-all-tools (async — GUI stays responsive). Edit & re-Send to cycle.")
+    ; ----- Tab 1 content (left: Copilot · right: Recording) -----
+    leftW := 560
+    rightX := 600
+    rightW := 360
+
+    t1Hint := AppGui.Add("Text", "x24 y56 w" leftW " c" Theme.FgDim,
+        "Compose a prompt, Send via copilot (async). Right pane: Record → file → Copilot.")
     t1PromptLbl := AppGui.Add("Text", "x24 y86 w200", "Prompt")
-    EdPrompt := AppGui.Add("Edit", "x24 y108 w920 h180 Multi WantReturn VScroll", "")
+    EdPrompt := AppGui.Add("Edit", "x24 y108 w" leftW " h150 Multi WantReturn VScroll", "")
     Theme.StyleEdit(EdPrompt)
 
-    BtnSend := AppGui.Add("Button", "x24 y300 w120 h32 Default", "Send")
+    BtnSend := AppGui.Add("Button", "x24 y268 w100 h30 Default", "Send")
     Theme.StyleButton(BtnSend, true)
     BtnSend.OnEvent("Click", OnCopilotSend)
 
-    BtnCancelCopilot := AppGui.Add("Button", "x156 y300 w120 h32", "Cancel")
+    BtnCancelCopilot := AppGui.Add("Button", "x132 y268 w90 h30", "Cancel")
     Theme.StyleButton(BtnCancelCopilot)
     BtnCancelCopilot.Enabled := false
     BtnCancelCopilot.OnEvent("Click", OnCopilotCancel)
 
-    BtnClearReply := AppGui.Add("Button", "x288 y300 w120 h32", "Clear reply")
+    BtnClearReply := AppGui.Add("Button", "x230 y268 w90 h30", "Clear reply")
     Theme.StyleButton(BtnClearReply)
     BtnClearReply.OnEvent("Click", OnClearReply)
 
-    BtnUseReply := AppGui.Add("Button", "x420 y300 w200 h32", "Use reply as next prompt")
+    BtnUseReply := AppGui.Add("Button", "x328 y268 w150 h30", "Use reply as prompt")
     Theme.StyleButton(BtnUseReply, true)
     BtnUseReply.OnEvent("Click", OnUseReplyAsPrompt)
 
-    BtnSavePrompt := AppGui.Add("Button", "x632 y300 w140 h32", "Save prompt")
+    BtnSavePrompt := AppGui.Add("Button", "x486 y268 w98 h30", "Save")
     Theme.StyleButton(BtnSavePrompt)
     BtnSavePrompt.OnEvent("Click", OnSavePrompt)
 
-    t1ReplyLbl := AppGui.Add("Text", "x24 y346 w400", "Response (editable)")
-    EdReply := AppGui.Add("Edit", "x24 y368 w920 h270 Multi WantReturn VScroll", "")
+    t1ReplyLbl := AppGui.Add("Text", "x24 y308 w" leftW, "Response (editable)")
+    EdReply := AppGui.Add("Edit", "x24 y330 w" leftW " h290 Multi WantReturn VScroll", "")
     Theme.StyleEdit(EdReply)
 
+    ; --- Right: Recording pane ---
+    LblRecording := AppGui.Add("Text", "x" rightX " y56 w" rightW, "Recording → Copilot")
+    try LblRecording.SetFont("s10 Bold c" Theme.Fg, "Segoe UI")
+    t1RecHint := AppGui.Add("Text", "x" rightX " y78 w" rightW " c" Theme.FgDim,
+        "Headed codegen writes recordings\latest.spec.js (wait for EXIT).")
+    t1UrlLbl := AppGui.Add("Text", "x" rightX " y108 w40 c" Theme.FgDim, "URL")
+    EdRecordUrl := AppGui.Add("Edit", "x" (rightX + 40) " y104 w" (rightW - 40) " h26", "https://playwright.dev")
+    Theme.StyleEdit(EdRecordUrl)
+
+    BtnRecord := AppGui.Add("Button", "x" rightX " y138 w" rightW " h32", "Record (headed codegen)")
+    Theme.StyleButton(BtnRecord, true)
+    BtnRecord.OnEvent("Click", OnRecordStart)
+
+    t1SpecLbl := AppGui.Add("Text", "x" rightX " y178 w" rightW, "latest.spec.js")
+    EdRecording := AppGui.Add("Edit", "x" rightX " y198 w" rightW " h200 Multi ReadOnly VScroll", "")
+    Theme.StyleEdit(EdRecording)
+
+    t1InstrLbl := AppGui.Add("Text", "x" rightX " y406 w" rightW, "Your instruction (sent last)")
+    EdRecordInstr := AppGui.Add("Edit", "x" rightX " y426 w" rightW " h60 Multi WantReturn VScroll",
+        "Turn this recording into a clean, stable Playwright test.")
+    Theme.StyleEdit(EdRecordInstr)
+
+    BtnSendRecording := AppGui.Add("Button", "x" rightX " y496 w" rightW " h30", "Send recording to Copilot")
+    Theme.StyleButton(BtnSendRecording, true)
+    BtnSendRecording.OnEvent("Click", OnSendRecordingToCopilot)
+
+    BtnSaveAsTest := AppGui.Add("Button", "x" rightX " y532 w" (rightW // 2 - 4) " h28", "Save as test")
+    Theme.StyleButton(BtnSaveAsTest)
+    BtnSaveAsTest.Enabled := false
+    BtnSaveAsTest.OnEvent("Click", OnSaveAsTest)
+
+    BtnRunSavedTest := AppGui.Add("Button", "x" (rightX + rightW // 2 + 4) " y532 w" (rightW // 2 - 4) " h28", "Run saved test")
+    Theme.StyleButton(BtnRunSavedTest)
+    BtnRunSavedTest.Enabled := false
+    BtnRunSavedTest.OnEvent("Click", OnRunSavedTest)
+
     Tab1Ctrls := [t1Hint, t1PromptLbl, EdPrompt, BtnSend, BtnCancelCopilot, BtnClearReply
-        , BtnUseReply, BtnSavePrompt, t1ReplyLbl, EdReply]
+        , BtnUseReply, BtnSavePrompt, t1ReplyLbl, EdReply
+        , LblRecording, t1RecHint, t1UrlLbl, EdRecordUrl, BtnRecord, t1SpecLbl, EdRecording
+        , t1InstrLbl, EdRecordInstr, BtnSendRecording, BtnSaveAsTest, BtnRunSavedTest]
 
     ; ----- Tab 2 content -----
     t2Hint := AppGui.Add("Text", "x24 y56 w900 c" Theme.FgDim,
-        "Click chips to compose npx --no-install playwright ... from repo root. Empty/incomplete slots block Run. Multi-line stops on first nonzero.")
-    t2PiecesLbl := AppGui.Add("Text", "x24 y86 w500", "Pieces  (" Catalog.pieces.Length " from scripts/puzzle-pieces.json)")
+        "Drag chips onto the canvas (or click to add). Slots open a dark editor. Empty/incomplete slots block Run.")
+    t2PiecesLbl := AppGui.Add("Text", "x24 y86 w280", "Pieces  (" Catalog.pieces.Length " from scripts/puzzle-pieces.json)")
+    AppGui.Add("Text", "x520 y86 w40 c" Theme.FgDim, "Filter")
+    EdChipFilter := AppGui.Add("Edit", "x565 y82 w200 h26", "")
+    Theme.StyleEdit(EdChipFilter)
+    EdChipFilter.OnEvent("Change", OnChipFilterChange)
 
     chipCtrls := []
+    ChipBtns := []
     x := 24
     y := 108
     colW := 180
@@ -128,7 +264,9 @@ BuildGui() {
         btn := AppGui.Add("Button", "x" x " y" y " w" (colW - 8) " h26", piece["label"])
         Theme.StyleChip(btn)
         btn.OnEvent("Click", ChipClick.Bind(piece))
+        ChipDrag.RegisterChip(btn.Hwnd, piece)
         chipCtrls.Push(btn)
+        ChipBtns.Push({ btn: btn, piece: piece, label: piece["label"], x: x, y: y })
         if Mod(idx, cols) = 0 {
             x := 24
             y += rowH
@@ -137,9 +275,11 @@ BuildGui() {
     }
     chipBottom := y + (Mod(Catalog.pieces.Length, cols) = 0 ? 0 : rowH) + 8
 
-    t2CanvasLbl := AppGui.Add("Text", "x24 y" chipBottom " w400", "Command canvas (editable; one command per line)")
+    t2CanvasLbl := AppGui.Add("Text", "x24 y" chipBottom " w400", "Command canvas (drop target · editable · one command per line)")
     EdCanvas := AppGui.Add("Edit", "x24 y" (chipBottom + 22) " w700 h120 Multi WantReturn VScroll", "")
     Theme.StyleEdit(EdCanvas)
+    ChipDrag.SetCanvas(EdCanvas.Hwnd)
+    ChipDrag.Install(OnChipDrop, OnChipDragHover, ChipDragCanStart)
 
     by := chipBottom + 22
     BtnRun := AppGui.Add("Button", "x740 y" by " w200 h36", "Run")
@@ -163,15 +303,33 @@ BuildGui() {
     Theme.StyleButton(BtnCopy)
     BtnCopy.OnEvent("Click", OnPuzzleCopy)
 
-    termTop := by + 150
-    t2TermLbl := AppGui.Add("Text", "x24 y" termTop " w400", "Terminal mirror (live)")
-    EdTerminal := AppGui.Add("Edit", "x24 y" (termTop + 22) " w920 h190 Multi ReadOnly VScroll", "")
+    BtnSaveCanvas := AppGui.Add("Button", "x740 y" (by + 150) " w96 h28", "Save")
+    Theme.StyleButton(BtnSaveCanvas)
+    BtnSaveCanvas.OnEvent("Click", OnSaveCanvas)
+
+    BtnSeed := AppGui.Add("Button", "x844 y" (by + 150) " w96 h28", "Default")
+    Theme.StyleButton(BtnSeed)
+    BtnSeed.OnEvent("Click", OnPuzzleSeedDefault)
+
+    termTop := by + 186
+    t2TermLbl := AppGui.Add("Text", "x24 y" termTop " w300", "Terminal mirror (live · persisted)")
+    BtnCopyTerm := AppGui.Add("Button", "x520 y" (termTop - 2) " w110 h26", "Copy term")
+    Theme.StyleButton(BtnCopyTerm)
+    BtnCopyTerm.OnEvent("Click", OnCopyTerminal)
+    BtnClearTerm := AppGui.Add("Button", "x638 y" (termTop - 2) " w110 h26", "Clear term")
+    Theme.StyleButton(BtnClearTerm)
+    BtnClearTerm.OnEvent("Click", OnClearTerminal)
+    BtnOpenRepo := AppGui.Add("Button", "x756 y" (termTop - 2) " w184 h26", "Open repo folder")
+    Theme.StyleButton(BtnOpenRepo)
+    BtnOpenRepo.OnEvent("Click", OnOpenRepoFolder)
+    EdTerminal := AppGui.Add("Edit", "x24 y" (termTop + 22) " w920 h160 Multi ReadOnly VScroll", "")
     Theme.StyleEdit(EdTerminal)
 
-    Tab2Ctrls := [t2Hint, t2PiecesLbl]
+    Tab2Ctrls := [t2Hint, t2PiecesLbl, EdChipFilter]
     for c in chipCtrls
         Tab2Ctrls.Push(c)
-    Tab2Ctrls.Push(t2CanvasLbl, EdCanvas, BtnRun, BtnCancelPuzzle, BtnClear, BtnBksp, BtnCopy, t2TermLbl, EdTerminal)
+    Tab2Ctrls.Push(t2CanvasLbl, EdCanvas, BtnRun, BtnCancelPuzzle, BtnClear, BtnBksp, BtnCopy
+        , BtnSaveCanvas, t2TermLbl, EdTerminal)
 
     StatusBar := AppGui.Add("Text", "x10 y675 w960 h24", " Ready")
     Theme.StyleStatus(StatusBar)
@@ -191,7 +349,14 @@ BuildGui() {
     Hotkey("^Enter", OnCopilotSend)
     Hotkey("F5", OnPuzzleRun)
     Hotkey("Delete", OnPuzzleBackspace)
+    Hotkey("Esc", OnEscDragOrFocus)
+    Hotkey("^s", OnSaveAllHotkey)
+    Hotkey("^+c", OnPuzzleCopy)
+    Hotkey("^+t", OnCopyTerminal)
     HotIf()
+
+    ; Autosave prompt/canvas/terminal every 60s while running
+    SetTimer(SaveIniAll, 60000)
 }
 
 ; ---------- Tab train wipe ----------
@@ -264,6 +429,7 @@ AnimateTrainWipe() {
         WipeActive := false
         try WipeGui.Hide()
         ShowTab(WipeTarget, true)
+        SaveIniAll()
         SetStatus(WipeTarget = 1 ? "Copilot prompt studio" : "Playwright CLI puzzle")
     }
 }
@@ -292,6 +458,9 @@ ShowTab(n, updateButtons := true) {
         Theme.StyleTabBtn(BtnTab1, n = 1)
         Theme.StyleTabBtn(BtnTab2, n = 2)
     }
+    ; Re-apply chip filter after bulk Visible toggles
+    if n = 2
+        OnChipFilterChange()
 }
 
 ApplyChrome(w, h) {
@@ -303,27 +472,51 @@ ApplyChrome(w, h) {
 }
 
 OnAppClose(*) {
-    OnCopilotCancel()
-    OnPuzzleCancel()
-    ExitApp()
+    ; Hide to tray instead of exit — Exit lives on the tray menu
+    HideToTray()
 }
 
 OnEsc(*) {
+    OnEscDragOrFocus()
+}
+
+OnEscDragOrFocus(*) {
     global AppGui, BtnTab1
+    if ChipDrag.Cancel() {
+        SetStatus("Drag cancelled")
+        return
+    }
     try BtnTab1.Focus()
 }
 
 OnResize(thisGui, minMax, width, height) {
     global StatusBar, EdPrompt, EdReply, EdCanvas, EdTerminal
+    global EdRecording, EdRecordUrl, EdRecordInstr, BtnRecord, BtnSendRecording
+    global BtnSaveAsTest, BtnRunSavedTest, LblRecording
     if minMax = -1
         return
     try {
         StatusBar.Move(10, height - 34, width - 20, 24)
-        ; Stretch primary edits with window
         contentW := width - 48
+        ; Tab1 split: ~58% left Copilot / ~38% right Recording
+        leftW := Max(Round(contentW * 0.55), 420)
+        gap := 16
+        rightX := 24 + leftW + gap
+        rightW := Max(contentW - leftW - gap, 280)
+        replyH := Max(height - 400, 140)
+        recH := Max(height - 480, 120)
         if contentW > 200 {
-            EdPrompt.Move(24, 108, contentW, 180)
-            EdReply.Move(24, 368, contentW, Max(height - 430, 120))
+            EdPrompt.Move(24, 108, leftW, 150)
+            EdReply.Move(24, 330, leftW, replyH)
+            try LblRecording.Move(rightX, 56, rightW, )
+            try EdRecordUrl.Move(rightX + 40, 104, rightW - 40, 26)
+            try BtnRecord.Move(rightX, 138, rightW, 32)
+            try EdRecording.Move(rightX, 198, rightW, recH)
+            instrY := 198 + recH + 8
+            try EdRecordInstr.Move(rightX, instrY + 20, rightW, 60)
+            try BtnSendRecording.Move(rightX, instrY + 90, rightW, 30)
+            try BtnSaveAsTest.Move(rightX, instrY + 126, rightW // 2 - 4, 28)
+            try BtnRunSavedTest.Move(rightX + rightW // 2 + 4, instrY + 126, rightW // 2 - 4, 28)
             EdCanvas.Move(24, , Min(contentW - 220, 700), )
             EdTerminal.Move(24, , contentW, )
         }
@@ -340,28 +533,50 @@ OnClearReply(*) {
 OnUseReplyAsPrompt(*) {
     global EdPrompt, EdReply
     reply := EdReply.Value
-    ; Strip loud auth banners if promoting a failed reply (keep body below banner)
     body := reply
-    if InStr(body, "COPILOT AUTH / LOGIN REQUIRED") {
-        ; Still allow promote — user may want to iterate on the text below
-    }
     if Trim(body) = "" {
         SetStatus("Reply is empty — nothing to promote")
         return
     }
     EdPrompt.Value := body
     try EdPrompt.Focus()
-    SaveIniPrompt()
+    SaveIniAll()
     SetStatus("Reply promoted → prompt (ready to Send)")
 }
 
 OnSavePrompt(*) {
-    SaveIniPrompt()
-    SetStatus("Prompt saved to ini")
+    SaveIniAll()
+    SetStatus("Saved prompt + canvas + terminal to ini")
+}
+
+OnSaveCanvas(*) {
+    SaveIniAll()
+    SetStatus("Canvas + terminal saved to ini")
+}
+
+OnSaveAllHotkey(*) {
+    SaveIniAll()
+    SetStatus("Saved (Ctrl+S) — prompt, canvas, terminal, window")
+}
+
+OnPuzzleSeedDefault(*) {
+    global Canvas, EdCanvas, ActiveTab, AppGui
+    if ActiveTab != 2 {
+        RequestTab(2)
+        return
+    }
+    if Trim(EdCanvas.Value) != "" {
+        if !Theme.ConfirmDark("Replace canvas with default test --project=chromium?", "Reset canvas", AppGui.Hwnd)
+            return
+    }
+    Canvas.SeedDefault()
+    RefreshCanvasEdit()
+    SaveIniAll()
+    SetStatus("Canvas reset to defaultFirstDrop")
 }
 
 OnCopilotSend(*) {
-    global EdPrompt, EdReply, RepoRoot, BusyCopilot, CopilotJob, BtnSend, BtnCancelCopilot, ActiveTab
+    global EdPrompt, EdReply, RepoRoot, BusyCopilot, CopilotJob, BtnSend, BtnCancelCopilot, ActiveTab, JobStartCopilot
 
     ; Ctrl+Enter is Tab1-only; button Click still works from tab 1
     if ActiveTab != 1 {
@@ -381,11 +596,12 @@ OnCopilotSend(*) {
         return
     }
 
-    SaveIniPrompt()
+    SaveIniAll()
     BusyCopilot := true
     try BtnSend.Enabled := false
     try BtnCancelCopilot.Enabled := true
     EdReply.Value := "Running copilot (async)…`n"
+    JobStartCopilot := A_TickCount
     SetStatus("Copilot starting…")
 
     CopilotJob := ShellExec.StartCopilot(prompt, RepoRoot)
@@ -419,13 +635,17 @@ OnCopilotCancel(*) {
 }
 
 PollCopilot() {
-    global CopilotJob, EdReply, BusyCopilot, BtnSend, BtnCancelCopilot
+    global CopilotJob, EdReply, BusyCopilot, BtnSend, BtnCancelCopilot, JobStartCopilot, BtnSaveAsTest
     if !IsObject(CopilotJob) {
         SetTimer(PollCopilot, 0)
         return
     }
     if !CopilotJob.done && CopilotJob.partial != ""
         EdReply.Value := CopilotJob.partial
+    if !CopilotJob.done {
+        elapsed := Round((A_TickCount - JobStartCopilot) / 1000)
+        SetStatus("Copilot running… " elapsed "s  (Cancel to abort)")
+    }
 
     if !CopilotJob.Poll()
         return
@@ -436,36 +656,83 @@ PollCopilot() {
     BusyCopilot := false
     try BtnSend.Enabled := true
     try BtnCancelCopilot.Enabled := false
-    SetStatus(code = 0 ? "Copilot finished OK" : "Copilot finished exit " code)
+    elapsed := Round((A_TickCount - JobStartCopilot) / 1000)
+    SetStatus((code = 0 ? "Copilot finished OK" : "Copilot finished exit " code) "  (" elapsed "s)")
+    try TrayTip("Copilot", (code = 0 ? "Finished OK" : "Exit " code) " (" elapsed "s)", code = 0 ? "Iconi" : "Iconx")
+    try BtnSaveAsTest.Enabled := (Trim(EdReply.Value) != "")
     CopilotJob := ""
+    SaveIniAll()
 }
 
-ChipClick(piece, *) {
-    global Canvas, Catalog
-    argv := Catalog.ResolvePieceArgv(piece, 0)
+; ---------- Puzzle chips / canvas ----------
+
+AddPieceToCanvas(piece) {
+    global Canvas, Catalog, AppGui
+    argv := Catalog.ResolvePieceArgv(piece, AppGui.Hwnd)
     if !(argv is Array) {
         SetStatus("Blocked — required slot empty or cancelled")
-        return
+        return false
     }
     Canvas.AddResolved(piece["label"], argv)
     RefreshCanvasEdit()
+    SaveIniAll()
     SetStatus("Added piece: " piece["label"])
+    return true
+}
+
+ChipClick(piece, *) {
+    if ChipDrag.ConsumeClick()
+        return
+    AddPieceToCanvas(piece)
+}
+
+OnChipDrop(piece) {
+    global ActiveTab
+    if ActiveTab != 2 {
+        RequestTab(2)
+    }
+    if AddPieceToCanvas(piece)
+        SetStatus("Dropped piece: " piece["label"])
+}
+
+OnChipDragHover(over) {
+    global EdCanvas
+    Theme.HighlightDropTarget(EdCanvas, over)
+}
+
+ChipDragCanStart() {
+    global ActiveTab, BusyPuzzle
+    return ActiveTab = 2 && !BusyPuzzle
 }
 
 OnPuzzleClear(*) {
-    global Canvas
+    global Canvas, EdCanvas, AppGui
+    if Trim(EdCanvas.Value) != "" {
+        if !Theme.ConfirmDark("Clear the command canvas?", "Clear canvas", AppGui.Hwnd)
+            return
+    }
     Canvas.Clear()
+    EdCanvas.Value := ""
     RefreshCanvasEdit()
+    SaveIniAll()
     SetStatus("Canvas cleared")
 }
 
 OnPuzzleBackspace(*) {
-    global Canvas, ActiveTab
+    global Canvas, ActiveTab, EdCanvas
     if ActiveTab != 2
         return
-    Canvas.Backspace()
-    RefreshCanvasEdit()
-    SetStatus("Removed last piece")
+    ; Keep rows aligned with edit text (user may have typed)
+    lines := Canvas.LinesFromText(EdCanvas.Value)
+    if Canvas.Count() != lines.Length
+        Canvas.RebuildFromText(EdCanvas.Value)
+    if Canvas.Backspace() {
+        RefreshCanvasEdit()
+    } else {
+        EdCanvas.Value := Canvas.BackspaceText(EdCanvas.Value)
+    }
+    SaveIniAll()
+    SetStatus("Removed last piece / line")
 }
 
 OnPuzzleCopy(*) {
@@ -481,7 +748,7 @@ RefreshCanvasEdit() {
 
 OnPuzzleRun(*) {
     global EdCanvas, EdTerminal, Canvas, Catalog, RepoRoot
-    global BusyPuzzle, PuzzleJob, BtnRun, BtnCancelPuzzle, ActiveTab
+    global BusyPuzzle, PuzzleJob, BtnRun, BtnCancelPuzzle, ActiveTab, JobStartPuzzle
 
     ; F5 is Tab2-only
     if ActiveTab != 2 {
@@ -521,6 +788,7 @@ OnPuzzleRun(*) {
     try BtnRun.Enabled := false
     try BtnCancelPuzzle.Enabled := true
     EdTerminal.Value := "cwd: " RepoRoot "`n--- async run (stop on first nonzero) ---`n"
+    JobStartPuzzle := A_TickCount
     SetStatus("Running from repo root…")
     PuzzleJob := ShellExec.StartCaptureLines(lines, RepoRoot)
     if PuzzleJob.done && InStr(PuzzleJob.output, "empty slots") {
@@ -550,10 +818,11 @@ OnPuzzleCancel(*) {
     try BtnCancelPuzzle.Enabled := false
     SetStatus("Puzzle run cancelled")
     PuzzleJob := ""
+    SaveIniAll()
 }
 
 PollPuzzle() {
-    global PuzzleJob, EdTerminal, BusyPuzzle, RepoRoot, BtnRun, BtnCancelPuzzle
+    global PuzzleJob, EdTerminal, BusyPuzzle, RepoRoot, BtnRun, BtnCancelPuzzle, JobStartPuzzle
     if !IsObject(PuzzleJob) {
         SetTimer(PollPuzzle, 0)
         return
@@ -564,6 +833,10 @@ PollPuzzle() {
     if !PuzzleJob.done
         live .= ">>> " PuzzleJob.cmd "`n" PuzzleJob.partial
     EdTerminal.Value := live
+    if !PuzzleJob.done {
+        elapsed := Round((A_TickCount - JobStartPuzzle) / 1000)
+        SetStatus("Puzzle running… " elapsed "s  (Cancel run to abort)")
+    }
 
     if !PuzzleJob.Poll()
         return
@@ -574,29 +847,324 @@ PollPuzzle() {
     BusyPuzzle := false
     try BtnRun.Enabled := true
     try BtnCancelPuzzle.Enabled := false
-    SetStatus(code = 0 ? "Puzzle run OK" : "Puzzle stopped — exit " code)
+    elapsed := Round((A_TickCount - JobStartPuzzle) / 1000)
+    SetStatus((code = 0 ? "Puzzle run OK" : "Puzzle stopped — exit " code) "  (" elapsed "s)")
+    try TrayTip("Puzzle run", (code = 0 ? "OK" : "Stopped exit " code) " (" elapsed "s)", code = 0 ? "Iconi" : "Iconx")
     PuzzleJob := ""
+    SaveIniAll()
 }
 
-LoadIniPrompt() {
-    global EdPrompt, IniPath
+; ---------- Ini persistence ----------
+
+IniEscape(s) {
+    s := StrReplace(s, "`r`n", "`n")
+    s := StrReplace(s, "`r", "`n")
+    ; literal backslash-n in text becomes double-escaped so real newlines can use \n
+    s := StrReplace(s, "\n", "\\n")
+    s := StrReplace(s, "`n", "\n")
+    return s
+}
+
+IniUnescape(s) {
+    ph := Chr(1)
+    s := StrReplace(s, "\\n", ph)
+    s := StrReplace(s, "\n", "`n")
+    s := StrReplace(s, ph, "\n")
+    return s
+}
+
+LoadIniAll() {
+    global EdPrompt, EdCanvas, EdTerminal, EdChipFilter, EdRecordInstr, EdRecordUrl, EdRecording, IniPath, ActiveTab, LastWinW, LastWinH, LastWinX, LastWinY, Canvas, RepoRoot
     if !FileExist(IniPath)
         return
     try {
         p := IniRead(IniPath, "Copilot", "LastPrompt", "")
-        p := StrReplace(p, "\n", "`n")
+        p := IniUnescape(p)
         if p != ""
             EdPrompt.Value := p
     }
+    try {
+        ri := IniRead(IniPath, "Record", "Instruction", "")
+        ri := IniUnescape(ri)
+        if ri != ""
+            EdRecordInstr.Value := ri
+        ru := IniRead(IniPath, "Record", "Url", "")
+        if ru != ""
+            EdRecordUrl.Value := ru
+    }
+    try {
+        ; Prefill recording pane from disk if present
+        spec := RecordSession.ReadLatest(RepoRoot)
+        if spec != ""
+            EdRecording.Value := spec
+    }
+    try {
+        c := IniRead(IniPath, "Puzzle", "Canvas", "")
+        c := IniUnescape(c)
+        if Trim(c) != "" {
+            EdCanvas.Value := c
+            Canvas.RebuildFromText(c)
+        }
+    }
+    try {
+        t := IniRead(IniPath, "Puzzle", "LastTerminal", "")
+        t := IniUnescape(t)
+        if t != ""
+            EdTerminal.Value := t
+    }
+    try {
+        tab := Integer(IniRead(IniPath, "UI", "ActiveTab", "1"))
+        if tab = 1 || tab = 2
+            ActiveTab := tab
+    }
+    try {
+        w := Integer(IniRead(IniPath, "UI", "Width", "980"))
+        h := Integer(IniRead(IniPath, "UI", "Height", "720"))
+        if w >= 820 && h >= 600 {
+            LastWinW := w
+            LastWinH := h
+        }
+    }
+    try {
+        filt := IniRead(IniPath, "Puzzle", "ChipFilter", "")
+        if filt != "" {
+            EdChipFilter.Value := filt
+        }
+    }
+    try {
+        xs := IniRead(IniPath, "UI", "X", "")
+        ys := IniRead(IniPath, "UI", "Y", "")
+        if xs != "" && ys != "" {
+            LastWinX := Integer(xs)
+            LastWinY := Integer(ys)
+        }
+    }
 }
 
-SaveIniPrompt() {
-    global EdPrompt, IniPath
-    p := EdPrompt.Value
-    p := StrReplace(p, "`r`n", "`n")
-    p := StrReplace(p, "`n", "\n")
-    try IniWrite(p, IniPath, "Copilot", "LastPrompt")
+SaveIniAll() {
+    global EdPrompt, EdCanvas, EdTerminal, EdChipFilter, EdRecordInstr, EdRecordUrl, IniPath, ActiveTab, LastWinW, LastWinH, LastWinX, LastWinY, AppGui
+    try {
+        IniWrite(IniEscape(EdPrompt.Value), IniPath, "Copilot", "LastPrompt")
+        try IniWrite(IniEscape(EdRecordInstr.Value), IniPath, "Record", "Instruction")
+        try IniWrite(EdRecordUrl.Value, IniPath, "Record", "Url")
+        IniWrite(IniEscape(EdCanvas.Value), IniPath, "Puzzle", "Canvas")
+        try IniWrite(EdChipFilter.Value, IniPath, "Puzzle", "ChipFilter")
+        ; Cap terminal snippet so ini stays modest (~48 KB chars)
+        term := EdTerminal.Value
+        if StrLen(term) > 48000
+            term := SubStr(term, -47999)
+        IniWrite(IniEscape(term), IniPath, "Puzzle", "LastTerminal")
+        IniWrite(ActiveTab, IniPath, "UI", "ActiveTab")
+        IniWrite(LastWinW, IniPath, "UI", "Width")
+        IniWrite(LastWinH, IniPath, "UI", "Height")
+        try {
+            WinGetPos(&wx, &wy, , , "ahk_id " AppGui.Hwnd)
+            if wx != "" {
+                LastWinX := wx
+                LastWinY := wy
+                IniWrite(wx, IniPath, "UI", "X")
+                IniWrite(wy, IniPath, "UI", "Y")
+            }
+        }
+    }
 }
+
+OnChipFilterChange(*) {
+    global ChipBtns, EdChipFilter, ActiveTab
+    if ActiveTab != 2
+        return
+    q := StrLower(Trim(EdChipFilter.Value))
+    shown := 0
+    for item in ChipBtns {
+        match := (q = "") || InStr(StrLower(item.label), q)
+        try item.btn.Visible := match
+        if match
+            shown += 1
+    }
+    SetStatus(q = "" ? "Pieces filter cleared" : "Filter '" q "' — " shown " visible")
+}
+
+OnCopyTerminal(*) {
+    global EdTerminal
+    A_Clipboard := EdTerminal.Value
+    SetStatus("Terminal output copied to clipboard")
+}
+
+OnClearTerminal(*) {
+    global EdTerminal
+    EdTerminal.Value := ""
+    SaveIniAll()
+    SetStatus("Terminal cleared")
+}
+
+OnOpenRepoFolder(*) {
+    global RepoRoot
+    if !DirExist(RepoRoot) {
+        SetStatus("Repo root missing: " RepoRoot)
+        return
+    }
+    Run('explorer.exe "' RepoRoot '"')
+    SetStatus("Opened repo folder")
+}
+
+
+; ---------- Record → file → Copilot ----------
+
+OnRecordStart(*) {
+    global RepoRoot, EdRecordUrl, BusyRecord, RecordJob, BtnRecord, EdRecording, ActiveTab, BusyCopilot
+    if ActiveTab != 1 {
+        RequestTab(1)
+    }
+    if BusyRecord {
+        SetStatus("Recording already in progress… (close codegen to finish)")
+        return
+    }
+    if BusyCopilot {
+        SetStatus("Copilot is busy — finish or Cancel before recording")
+        return
+    }
+    url := Trim(EdRecordUrl.Value)
+    try {
+        RecordJob := RecordSession.StartRecord(RepoRoot, url)
+    } catch as e {
+        SetStatus("Record failed to start: " e.Message)
+        try TrayTip("Record", e.Message, "Iconx")
+        return
+    }
+    BusyRecord := true
+    try BtnRecord.Enabled := false
+    archMsg := RecordJob.archived != "" ? " (archived prior latest)" : ""
+    via := RecordJob.usedNpm ? "npm run codegen:record" : "npx playwright codegen"
+    EdRecording.Value := "; Recording in progress via " via "…`n; Close the Playwright Inspector / codegen window when done.`n; Waiting for process EXIT (no mid-session poll)."
+    SetStatus("Recording started" archMsg " — close codegen when done…")
+    try TrayTip("Record", "Headed codegen started — close the window when finished", "Iconi")
+    SetTimer(PollRecordExit, 500)
+}
+
+OnRecordCancel(*) {
+    global RecordJob, BusyRecord, BtnRecord
+    SetTimer(PollRecordExit, 0)
+    if IsObject(RecordJob) && RecordJob.HasProp("pid") && RecordJob.pid {
+        try ProcessClose(RecordJob.pid)
+    }
+    BusyRecord := false
+    RecordJob := ""
+    try BtnRecord.Enabled := true
+}
+
+PollRecordExit() {
+    global RecordJob, BusyRecord, BtnRecord, EdRecording, RepoRoot
+    if !IsObject(RecordJob) {
+        SetTimer(PollRecordExit, 0)
+        BusyRecord := false
+        try BtnRecord.Enabled := true
+        return
+    }
+    ; Wait for EXIT only — do not read codegen stdout mid-session
+    if ProcessExist(RecordJob.pid) {
+        SetStatus("Recording… waiting for codegen EXIT (pid " RecordJob.pid ")")
+        return
+    }
+    SetTimer(PollRecordExit, 0)
+    BusyRecord := false
+    try BtnRecord.Enabled := true
+    spec := RecordSession.ReadLatest(RepoRoot)
+    if spec = "" {
+        EdRecording.Value := "; codegen exited but recordings\\latest.spec.js is missing or empty."
+        SetStatus("Record finished — no latest.spec.js (aborted?)")
+        try TrayTip("Record", "No latest.spec.js — recording aborted?", "Iconx")
+    } else {
+        EdRecording.Value := spec
+        sz := 0
+        try sz := FileGetSize(RecordSession.LatestPath(RepoRoot))
+        SetStatus("Record finished — loaded latest.spec.js (" sz " bytes)")
+        try TrayTip("Record", "Loaded latest.spec.js (" sz " bytes)", "Iconi")
+    }
+    RecordJob := ""
+    SaveIniAll()
+}
+
+OnSendRecordingToCopilot(*) {
+    global RepoRoot, EdRecording, EdRecordInstr, EdPrompt, EdReply, ActiveTab
+    global BusyCopilot, BusyRecord, BtnSaveAsTest
+    if BusyRecord {
+        SetStatus("Still recording — wait for codegen EXIT first")
+        return
+    }
+    if BusyCopilot {
+        SetStatus("Copilot already running…")
+        return
+    }
+    if !RecordSession.LatestIsSendable(RepoRoot) {
+        msg := "Send blocked — recordings\\latest.spec.js missing or under ~20 bytes (aborted recorder)."
+        SetStatus(msg)
+        try TrayTip("Send recording", "not sendable — missing/tiny latest.spec.js", "Iconx")
+        return
+    }
+    ; Refresh pane from disk (source of truth)
+    spec := RecordSession.ReadLatest(RepoRoot)
+    if Trim(spec) = "" {
+        SetStatus("Send blocked — latest.spec.js empty")
+        try TrayTip("Send recording", "latest.spec.js empty", "Iconx")
+        return
+    }
+    EdRecording.Value := spec
+    prompt := RecordSession.BuildCopilotPrompt(spec, EdRecordInstr.Value)
+    EdPrompt.Value := prompt
+    try BtnSaveAsTest.Enabled := false
+    ; Force Tab 1 immediately (avoid train-wipe race before Send)
+    ShowTab(1, true)
+    SaveIniAll()
+    SetStatus("Recording prompt loaded — sending to Copilot…")
+    OnCopilotSend()
+}
+
+OnSaveAsTest(*) {
+    global RepoRoot, EdReply, BtnRunSavedTest, LastSavedSpec
+    raw := EdReply.Value
+    body := RecordSession.StripMarkdownFences(raw)
+    if !RecordSession.LooksLikePlaywrightTest(body) {
+        SetStatus("not a runnable test")
+        try TrayTip("Save as test", "not a runnable test — need test( + @playwright/test import", "Iconx")
+        return
+    }
+    path := RecordSession.SaveAsTest(RepoRoot, raw)
+    if path = "" {
+        SetStatus("not a runnable test")
+        try TrayTip("Save as test", "not a runnable test", "Iconx")
+        return
+    }
+    LastSavedSpec := path
+    try BtnRunSavedTest.Enabled := true
+    ; Show stripped body in reply for clarity
+    EdReply.Value := body
+    SetStatus("Saved test: " path)
+    try TrayTip("Save as test", path, "Iconi")
+}
+
+OnRunSavedTest(*) {
+    global RepoRoot, LastSavedSpec, ActiveTab, EdCanvas, Canvas, BusyPuzzle
+    if LastSavedSpec = "" || !FileExist(LastSavedSpec) {
+        SetStatus("No saved recorded test to run")
+        try TrayTip("Run saved test", "Save as test first", "Iconx")
+        return
+    }
+    if BusyPuzzle {
+        SetStatus("Puzzle already running…")
+        return
+    }
+    cmd := RecordSession.BuildTestCommand(LastSavedSpec, RepoRoot)
+    ; Put on canvas and run via existing puzzle pipeline
+    Canvas.Clear()
+    Canvas.RebuildFromText(cmd)
+    EdCanvas.Value := cmd
+    if ActiveTab != 2
+        RequestTab(2)
+    SaveIniAll()
+    SetStatus("Running saved recorded test…")
+    OnPuzzleRun()
+}
+
 
 SetStatus(msg) {
     global StatusBar
