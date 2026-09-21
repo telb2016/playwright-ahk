@@ -14,7 +14,7 @@ class SlotEditor {
         resultMap := ""
         done := false
 
-        opts := "+AlwaysOnTop -MinimizeBox -MaximizeBox +MinSize420x180"
+        opts := "+AlwaysOnTop -MinimizeBox -MaximizeBox +MinSize460x200"
         if ownerHwnd
             opts .= " +Owner" ownerHwnd
 
@@ -23,10 +23,10 @@ class SlotEditor {
         g.MarginX := 16
         g.MarginY := 12
 
-        g.Add("Text", "w390 c" Theme.Fg,
+        g.Add("Text", "w420 c" Theme.Fg,
             "Fill slots for:  " label)
-        g.Add("Text", "w390 c" Theme.FgDim,
-            "* = required   ·   Esc / Cancel aborts the drop")
+        g.Add("Text", "w420 c" Theme.FgDim,
+            "* = required   ·   Esc / Cancel aborts the drop   ·   Browse for file/out")
 
         edits := []
         for slot in slots {
@@ -34,13 +34,23 @@ class SlotEditor {
             required := slot.Has("required") && slot["required"]
             def := SlotEditor.DefaultFor(name, piece)
             star := required ? " *" : ""
-            g.Add("Text", "xm w390 c" Theme.FgDim, name star)
-            ed := g.Add("Edit", "xm w390 h26", def)
-            Theme.StyleEdit(ed)
+            g.Add("Text", "xm w420 c" Theme.FgDim, name star)
+
+            browseable := (name = "file" || name = "out")
+            if browseable {
+                ed := g.Add("Edit", "xm w320 h26", def)
+                Theme.StyleEdit(ed)
+                btnBrowse := g.Add("Button", "x+8 w90 h26", "Browse…")
+                Theme.StyleButton(btnBrowse)
+                btnBrowse.OnEvent("Click", SlotEditor.BrowseClick.Bind(ed, name))
+            } else {
+                ed := g.Add("Edit", "xm w420 h26", def)
+                Theme.StyleEdit(ed)
+            }
             edits.Push({ name: name, required: required, ed: ed })
         }
 
-        errLbl := g.Add("Text", "xm w390 h18 c" Theme.Err, "")
+        errLbl := g.Add("Text", "xm w420 h18 c" Theme.Err, "")
         try errLbl.SetFont("s9 c" Theme.Err, "Segoe UI")
 
         btnOk := g.Add("Button", "xm w120 h32 Default", "OK")
@@ -77,12 +87,22 @@ class SlotEditor {
 
         hwnd := g.Hwnd
         Theme.ApplyDarkTitleBar(hwnd)
-        g.Show("w430")
-        ; Focus first edit
+        g.Show("w460")
         if edits.Length
             try edits[1].ed.Focus()
         WinWaitClose("ahk_id " hwnd)
         return resultMap
+    }
+
+    static BrowseClick(ed, name, *) {
+        if name = "file" {
+            path := FileSelect(1, , "Select trace / report file", "Trace/Zip (*.zip)|*.zip|All (*.*)|*.*")
+        } else {
+            ; out — save-as style
+            path := FileSelect("S 16", , "Output file", "PNG/PDF (*.png;*.pdf)|*.png;*.pdf|All (*.*)|*.*")
+        }
+        if path != ""
+            ed.Value := path
     }
 
     static DefaultFor(name, piece) {

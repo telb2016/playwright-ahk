@@ -24,8 +24,9 @@ global BusyCopilot, BusyPuzzle
 global ActiveTab, BtnTab1, BtnTab2
 global Tab1Ctrls, Tab2Ctrls
 global WipeGui, WipeLbl, WipeActive, WipeDir, WipeStep, WipeTarget
-global LastWinW, LastWinH
+global LastWinW, LastWinH, LastWinX, LastWinY
 global AppVisible
+global JobStartCopilot, JobStartPuzzle
 
 CopilotJob := ""
 PuzzleJob := ""
@@ -40,7 +41,11 @@ WipeStep := 0
 WipeTarget := 1
 LastWinW := 980
 LastWinH := 720
+LastWinX := ""
+LastWinY := ""
 AppVisible := true
+JobStartCopilot := 0
+JobStartPuzzle := 0
 
 RepoRoot := ShellExec.ResolveRepoRoot(A_ScriptFullPath)
 IniPath := A_ScriptDir "\PlaywrightAhkApp.ini"
@@ -57,7 +62,10 @@ if Trim(EdCanvas.Value) = "" {
 }
 ShowTab(ActiveTab, true)
 SetStatus("Ready — repo root: " RepoRoot)
-AppGui.Show("w" LastWinW " h" LastWinH)
+showOpts := "w" LastWinW " h" LastWinH
+if LastWinX != "" && LastWinY != ""
+    showOpts .= " x" LastWinX " y" LastWinY
+AppGui.Show(showOpts)
 ApplyChrome(LastWinW, LastWinH)
 ; Global show/focus hotkey
 Hotkey("^!p", ToggleShowFocus)
@@ -98,10 +106,13 @@ ToggleShowFocus(*) {
 }
 
 ShowAndFocus() {
-    global AppGui, AppVisible, LastWinW, LastWinH
+    global AppGui, AppVisible, LastWinW, LastWinH, LastWinX, LastWinY
     AppVisible := true
     try {
-        AppGui.Show("w" LastWinW " h" LastWinH)
+        showOpts := "w" LastWinW " h" LastWinH
+        if LastWinX != "" && LastWinY != ""
+            showOpts .= " x" LastWinX " y" LastWinY
+        AppGui.Show(showOpts)
         WinActivate("ahk_id " AppGui.Hwnd)
         ApplyChrome(LastWinW, LastWinH)
     }
@@ -205,7 +216,7 @@ BuildGui() {
     EdCanvas := AppGui.Add("Edit", "x24 y" (chipBottom + 22) " w700 h120 Multi WantReturn VScroll", "")
     Theme.StyleEdit(EdCanvas)
     ChipDrag.SetCanvas(EdCanvas.Hwnd)
-    ChipDrag.Install(OnChipDrop)
+    ChipDrag.Install(OnChipDrop, OnChipDragHover, ChipDragCanStart)
 
     by := chipBottom + 22
     BtnRun := AppGui.Add("Button", "x740 y" by " w200 h36", "Run")
@@ -442,7 +453,7 @@ OnSaveCanvas(*) {
 }
 
 OnCopilotSend(*) {
-    global EdPrompt, EdReply, RepoRoot, BusyCopilot, CopilotJob, BtnSend, BtnCancelCopilot, ActiveTab
+    global EdPrompt, EdReply, RepoRoot, BusyCopilot, CopilotJob, BtnSend, BtnCancelCopilot, ActiveTab, JobStartCopilot
 
     ; Ctrl+Enter is Tab1-only; button Click still works from tab 1
     if ActiveTab != 1 {
@@ -467,6 +478,7 @@ OnCopilotSend(*) {
     try BtnSend.Enabled := false
     try BtnCancelCopilot.Enabled := true
     EdReply.Value := "Running copilot (async)…`n"
+    JobStartCopilot := A_TickCount
     SetStatus("Copilot starting…")
 
     CopilotJob := ShellExec.StartCopilot(prompt, RepoRoot)
@@ -500,13 +512,17 @@ OnCopilotCancel(*) {
 }
 
 PollCopilot() {
-    global CopilotJob, EdReply, BusyCopilot, BtnSend, BtnCancelCopilot
+    global CopilotJob, EdReply, BusyCopilot, BtnSend, BtnCancelCopilot, JobStartCopilot
     if !IsObject(CopilotJob) {
         SetTimer(PollCopilot, 0)
         return
     }
     if !CopilotJob.done && CopilotJob.partial != ""
         EdReply.Value := CopilotJob.partial
+    if !CopilotJob.done {
+        elapsed := Round((A_TickCount - JobStartCopilot) / 1000)
+        SetStatus("Copilot running… " elapsed "s  (Cancel to abort)")
+    }
 
     if !CopilotJob.Poll()
         return
@@ -517,7 +533,8 @@ PollCopilot() {
     BusyCopilot := false
     try BtnSend.Enabled := true
     try BtnCancelCopilot.Enabled := false
-    SetStatus(code = 0 ? "Copilot finished OK" : "Copilot finished exit " code)
+    elapsed := Round((A_TickCount - JobStartCopilot) / 1000)
+    SetStatus((code = 0 ? "Copilot finished OK" : "Copilot finished exit " code) "  (" elapsed "s)")
     CopilotJob := ""
     SaveIniAll()
 }
@@ -551,6 +568,16 @@ OnChipDrop(piece) {
     }
     if AddPieceToCanvas(piece)
         SetStatus("Dropped piece: " piece["label"])
+}
+
+OnChipDragHover(over) {
+    global EdCanvas
+    Theme.HighlightDropTarget(EdCanvas, over)
+}
+
+ChipDragCanStart() {
+    global ActiveTab
+    return ActiveTab = 2
 }
 
 OnPuzzleClear(*) {
@@ -589,7 +616,7 @@ RefreshCanvasEdit() {
 
 OnPuzzleRun(*) {
     global EdCanvas, EdTerminal, Canvas, Catalog, RepoRoot
-    global BusyPuzzle, PuzzleJob, BtnRun, BtnCancelPuzzle, ActiveTab
+    global BusyPuzzle, PuzzleJob, BtnRun, BtnCancelPuzzle, ActiveTab, JobStartPuzzle
 
     ; F5 is Tab2-only
     if ActiveTab != 2 {
@@ -629,6 +656,7 @@ OnPuzzleRun(*) {
     try BtnRun.Enabled := false
     try BtnCancelPuzzle.Enabled := true
     EdTerminal.Value := "cwd: " RepoRoot "`n--- async run (stop on first nonzero) ---`n"
+    JobStartPuzzle := A_TickCount
     SetStatus("Running from repo root…")
     PuzzleJob := ShellExec.StartCaptureLines(lines, RepoRoot)
     if PuzzleJob.done && InStr(PuzzleJob.output, "empty slots") {
@@ -662,7 +690,7 @@ OnPuzzleCancel(*) {
 }
 
 PollPuzzle() {
-    global PuzzleJob, EdTerminal, BusyPuzzle, RepoRoot, BtnRun, BtnCancelPuzzle
+    global PuzzleJob, EdTerminal, BusyPuzzle, RepoRoot, BtnRun, BtnCancelPuzzle, JobStartPuzzle
     if !IsObject(PuzzleJob) {
         SetTimer(PollPuzzle, 0)
         return
@@ -673,6 +701,10 @@ PollPuzzle() {
     if !PuzzleJob.done
         live .= ">>> " PuzzleJob.cmd "`n" PuzzleJob.partial
     EdTerminal.Value := live
+    if !PuzzleJob.done {
+        elapsed := Round((A_TickCount - JobStartPuzzle) / 1000)
+        SetStatus("Puzzle running… " elapsed "s  (Cancel run to abort)")
+    }
 
     if !PuzzleJob.Poll()
         return
@@ -683,7 +715,8 @@ PollPuzzle() {
     BusyPuzzle := false
     try BtnRun.Enabled := true
     try BtnCancelPuzzle.Enabled := false
-    SetStatus(code = 0 ? "Puzzle run OK" : "Puzzle stopped — exit " code)
+    elapsed := Round((A_TickCount - JobStartPuzzle) / 1000)
+    SetStatus((code = 0 ? "Puzzle run OK" : "Puzzle stopped — exit " code) "  (" elapsed "s)")
     PuzzleJob := ""
     SaveIniAll()
 }
@@ -708,7 +741,7 @@ IniUnescape(s) {
 }
 
 LoadIniAll() {
-    global EdPrompt, EdCanvas, EdTerminal, IniPath, ActiveTab, LastWinW, LastWinH, Canvas
+    global EdPrompt, EdCanvas, EdTerminal, IniPath, ActiveTab, LastWinW, LastWinH, LastWinX, LastWinY, Canvas
     if !FileExist(IniPath)
         return
     try {
@@ -744,10 +777,18 @@ LoadIniAll() {
             LastWinH := h
         }
     }
+    try {
+        xs := IniRead(IniPath, "UI", "X", "")
+        ys := IniRead(IniPath, "UI", "Y", "")
+        if xs != "" && ys != "" {
+            LastWinX := Integer(xs)
+            LastWinY := Integer(ys)
+        }
+    }
 }
 
 SaveIniAll() {
-    global EdPrompt, EdCanvas, EdTerminal, IniPath, ActiveTab, LastWinW, LastWinH
+    global EdPrompt, EdCanvas, EdTerminal, IniPath, ActiveTab, LastWinW, LastWinH, LastWinX, LastWinY, AppGui
     try {
         IniWrite(IniEscape(EdPrompt.Value), IniPath, "Copilot", "LastPrompt")
         IniWrite(IniEscape(EdCanvas.Value), IniPath, "Puzzle", "Canvas")
@@ -759,6 +800,15 @@ SaveIniAll() {
         IniWrite(ActiveTab, IniPath, "UI", "ActiveTab")
         IniWrite(LastWinW, IniPath, "UI", "Width")
         IniWrite(LastWinH, IniPath, "UI", "Height")
+        try {
+            WinGetPos(&wx, &wy, , , "ahk_id " AppGui.Hwnd)
+            if wx != "" {
+                LastWinX := wx
+                LastWinY := wy
+                IniWrite(wx, IniPath, "UI", "X")
+                IniWrite(wy, IniPath, "UI", "Y")
+            }
+        }
     }
 }
 

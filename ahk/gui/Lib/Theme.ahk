@@ -15,6 +15,8 @@ class Theme {
     static Err := "F44747"
     static Border := "3E3E42"
     static Train := "0A4D73"
+    static DropTarget := "264F78"
+    static DropTargetFg := "9CDCFE"
 
     ; Prefer immersive dark titlebar (Win10 1903+ / Win11). Falls back silently.
     static ApplyDarkTitleBar(hwnd) {
@@ -82,5 +84,15 @@ class Theme {
         else
             ctrl.Opt("Background" Theme.BgPanel " c" Theme.FgDim)
         try ctrl.SetFont("s10 Bold c" (active ? "FFFFFF" : Theme.FgDim), "Segoe UI")
+    }
+
+    ; Flash / highlight an Edit as a drop target during chip drag.
+    static HighlightDropTarget(ctrl, on := true) {
+        if !IsObject(ctrl)
+            return
+        if on
+            ctrl.Opt("Background" Theme.DropTarget " c" Theme.DropTargetFg)
+        else
+            Theme.StyleEdit(ctrl)
     }
 }

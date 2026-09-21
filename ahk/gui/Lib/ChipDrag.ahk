@@ -9,10 +9,12 @@ class ChipDrag {
     static ChipHwnds := Map()
     static CanvasHwnd := 0
     static OnDrop := ""          ; callback(piece)
+    static OnHover := ""         ; callback(overCanvas:bool) while dragging
+    static CanStart := ""        ; callback() => bool (e.g. ActiveTab = 2)
     static SuppressClick := false
     static HookInstalled := false
+    static LastOver := false
 
-    ; Register a chip button HWND → piece Map
     static RegisterChip(hwnd, piece) {
         if hwnd
             ChipDrag.ChipHwnds[hwnd] := piece
@@ -22,9 +24,11 @@ class ChipDrag {
         ChipDrag.CanvasHwnd := hwnd
     }
 
-    ; onDropCb(piece) — called when a drag is released over the canvas
-    static Install(onDropCb) {
+    ; onDropCb(piece), optional onHoverCb(over), optional canStartCb()
+    static Install(onDropCb, onHoverCb := "", canStartCb := "") {
         ChipDrag.OnDrop := onDropCb
+        ChipDrag.OnHover := onHoverCb
+        ChipDrag.CanStart := canStartCb
         if ChipDrag.HookInstalled
             return
         ; WM_LBUTTONDOWN = 0x0201 — fires on the control that was clicked
@@ -35,7 +39,9 @@ class ChipDrag {
     static OnLButtonDown(wParam, lParam, msg, hwnd) {
         if !ChipDrag.ChipHwnds.Has(hwnd)
             return
-        ; Only drag when puzzle tab chips are relevant (caller may clear map)
+        can := ChipDrag.CanStart
+        if can && !can.Call()
+            return
         piece := ChipDrag.ChipHwnds[hwnd]
         MouseGetPos(&mx, &my)
         ChipDrag.State := {
@@ -45,6 +51,7 @@ class ChipDrag {
             dragging: false,
             hwnd: hwnd
         }
+        ChipDrag.LastOver := false
         SetTimer(ChipDrag.Poll, 16)
     }
 
@@ -59,6 +66,12 @@ class ChipDrag {
             ChipDrag.EndDrag()
             return
         }
+        ; Esc while dragging
+        if GetKeyState("Escape", "P") {
+            SetTimer(ChipDrag.Poll, 0)
+            ChipDrag.Cancel()
+            return
+        }
         MouseGetPos(&mx, &my)
         if !st.dragging {
             dx := Abs(mx - st.startX)
@@ -70,6 +83,12 @@ class ChipDrag {
         } else {
             ChipDrag.MoveGhost(mx, my)
             over := ChipDrag.IsOverCanvas()
+            if over != ChipDrag.LastOver {
+                ChipDrag.LastOver := over
+                hover := ChipDrag.OnHover
+                if hover
+                    hover.Call(over)
+            }
             if over
                 ToolTip("Release to drop on canvas")
             else
@@ -83,9 +102,12 @@ class ChipDrag {
         ToolTip()
         wasDragging := IsObject(st) && st.dragging
         ChipDrag.HideGhost()
+        hover := ChipDrag.OnHover
+        if hover
+            hover.Call(false)
+        ChipDrag.LastOver := false
         if !wasDragging
             return
-        ; Suppress the Button Click that follows a drag
         ChipDrag.SuppressClick := true
         SetTimer(() => (ChipDrag.SuppressClick := false), -400)
         if ChipDrag.IsOverCanvas() && IsObject(st.piece) {
@@ -107,12 +129,15 @@ class ChipDrag {
         target := ChipDrag.CanvasHwnd
         if !target
             return false
+        ; Prefer hit-test by screen rect (works even with WS_EX_TRANSPARENT ghost)
+        if ChipDrag.PointInHwnd(target) {
+            return true
+        }
         MouseGetPos(, , , &ctrlHwnd, 2)
         if !ctrlHwnd
             return false
         if ctrlHwnd = target
             return true
-        ; Walk parents a few levels (Edit may report child)
         hwnd := ctrlHwnd
         loop 4 {
             parent := DllCall("user32\GetParent", "ptr", hwnd, "ptr")
@@ -123,6 +148,20 @@ class ChipDrag {
             hwnd := parent
         }
         return false
+    }
+
+    static PointInHwnd(hwnd) {
+        if !hwnd
+            return false
+        MouseGetPos(&mx, &my)
+        rect := Buffer(16, 0)
+        if !DllCall("user32\GetWindowRect", "ptr", hwnd, "ptr", rect)
+            return false
+        left := NumGet(rect, 0, "int")
+        top := NumGet(rect, 4, "int")
+        right := NumGet(rect, 8, "int")
+        bottom := NumGet(rect, 12, "int")
+        return mx >= left && mx < right && my >= top && my < bottom
     }
 
     static ShowGhost(piece, mx, my) {
@@ -154,7 +193,6 @@ class ChipDrag {
         ToolTip()
     }
 
-    ; Allow Esc to cancel an in-progress drag
     static Cancel() {
         if !IsObject(ChipDrag.State)
             return false
@@ -163,6 +201,10 @@ class ChipDrag {
         ChipDrag.SuppressClick := true
         SetTimer(() => (ChipDrag.SuppressClick := false), -400)
         ChipDrag.HideGhost()
+        hover := ChipDrag.OnHover
+        if hover
+            hover.Call(false)
+        ChipDrag.LastOver := false
         return true
     }
 }

@@ -102,10 +102,11 @@ scripts/puzzle-pieces.json     ← Tab 2 catalog (repo root)
 ## CHANGELOG (overnight polish)
 
 ### PR #4 — `ahk/overnight-polish`
-- **Chip→canvas drag-drop** — drag chips onto the canvas (ghost + drop target); click-to-add kept as fallback; Esc cancels drag.
-- **Dark Slot editor** — replaces `InputBox` for pieces with slots (grep, url, file, out).
+- **Chip→canvas drag-drop** — drag chips onto the canvas (ghost + drop target); click-to-add kept as fallback; Esc cancels drag; canvas highlights while hovered.
+- **Dark Slot editor** — replaces `InputBox` for pieces with slots (grep, url, file, out); Browse… for file/out.
 - **Tray + Ctrl+Alt+P** — close hides to tray; hotkey toggles show/focus; tray menu Exit / tab jump.
-- **Ini persistence** — canvas + last terminal snippet (+ prompt, active tab, window size).
+- **Ini persistence** — canvas + last terminal snippet (+ prompt, active tab, window size + position).
+- **Run elapsed** — status bar shows live seconds while Copilot / puzzle jobs run.
 - **InvestorDemo** — `Ctrl+Alt+0` launches overnight GUI.
 - Save canvas button; backspace works on ini-restored canvas text.
 
