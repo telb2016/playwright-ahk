@@ -26,6 +26,7 @@ global Tab1Ctrls, Tab2Ctrls
 global WipeGui, WipeLbl, WipeActive, WipeDir, WipeStep, WipeTarget
 global LastWinW, LastWinH, LastWinX, LastWinY
 global AppVisible
+global ChipBtns, EdChipFilter
 global JobStartCopilot, JobStartPuzzle
 
 CopilotJob := ""
@@ -44,6 +45,7 @@ LastWinH := 720
 LastWinX := ""
 LastWinY := ""
 AppVisible := true
+ChipBtns := []
 JobStartCopilot := 0
 JobStartPuzzle := 0
 
@@ -108,6 +110,7 @@ ToggleShowFocus(*) {
 ShowAndFocus() {
     global AppGui, AppVisible, LastWinW, LastWinH, LastWinX, LastWinY
     AppVisible := true
+ChipBtns := []
     try {
         showOpts := "w" LastWinW " h" LastWinH
         if LastWinX != "" && LastWinY != ""
@@ -131,7 +134,7 @@ BuildGui() {
     global AppGui, StatusBar
     global EdPrompt, EdReply, BtnSend, BtnCancelCopilot, BtnUseReply
     global EdCanvas, EdTerminal, BtnRun, BtnCancelPuzzle
-    global Catalog, Tab1Ctrls, Tab2Ctrls
+    global Catalog, Tab1Ctrls, Tab2Ctrls, ChipBtns, EdChipFilter
     global BtnTab1, BtnTab2, WipeGui, WipeLbl
 
     AppGui := Gui("+Resize +MinSize820x600", "Playwright AHK — Overnight GUI")
@@ -190,9 +193,14 @@ BuildGui() {
     ; ----- Tab 2 content -----
     t2Hint := AppGui.Add("Text", "x24 y56 w900 c" Theme.FgDim,
         "Drag chips onto the canvas (or click to add). Slots open a dark editor. Empty/incomplete slots block Run.")
-    t2PiecesLbl := AppGui.Add("Text", "x24 y86 w500", "Pieces  (" Catalog.pieces.Length " from scripts/puzzle-pieces.json)")
+    t2PiecesLbl := AppGui.Add("Text", "x24 y86 w280", "Pieces  (" Catalog.pieces.Length " from scripts/puzzle-pieces.json)")
+    AppGui.Add("Text", "x520 y86 w40 c" Theme.FgDim, "Filter")
+    EdChipFilter := AppGui.Add("Edit", "x565 y82 w200 h26", "")
+    Theme.StyleEdit(EdChipFilter)
+    EdChipFilter.OnEvent("Change", OnChipFilterChange)
 
     chipCtrls := []
+    ChipBtns := []
     x := 24
     y := 108
     colW := 180
@@ -204,6 +212,7 @@ BuildGui() {
         btn.OnEvent("Click", ChipClick.Bind(piece))
         ChipDrag.RegisterChip(btn.Hwnd, piece)
         chipCtrls.Push(btn)
+        ChipBtns.Push({ btn: btn, piece: piece, label: piece["label"], x: x, y: y })
         if Mod(idx, cols) = 0 {
             x := 24
             y += rowH
@@ -249,11 +258,17 @@ BuildGui() {
     BtnSeed.OnEvent("Click", OnPuzzleSeedDefault)
 
     termTop := by + 186
-    t2TermLbl := AppGui.Add("Text", "x24 y" termTop " w400", "Terminal mirror (live · persisted)")
+    t2TermLbl := AppGui.Add("Text", "x24 y" termTop " w300", "Terminal mirror (live · persisted)")
+    BtnCopyTerm := AppGui.Add("Button", "x640 y" (termTop - 2) " w140 h26", "Copy terminal")
+    Theme.StyleButton(BtnCopyTerm)
+    BtnCopyTerm.OnEvent("Click", OnCopyTerminal)
+    BtnOpenRepo := AppGui.Add("Button", "x790 y" (termTop - 2) " w150 h26", "Open repo folder")
+    Theme.StyleButton(BtnOpenRepo)
+    BtnOpenRepo.OnEvent("Click", OnOpenRepoFolder)
     EdTerminal := AppGui.Add("Edit", "x24 y" (termTop + 22) " w920 h160 Multi ReadOnly VScroll", "")
     Theme.StyleEdit(EdTerminal)
 
-    Tab2Ctrls := [t2Hint, t2PiecesLbl]
+    Tab2Ctrls := [t2Hint, t2PiecesLbl, EdChipFilter]
     for c in chipCtrls
         Tab2Ctrls.Push(c)
     Tab2Ctrls.Push(t2CanvasLbl, EdCanvas, BtnRun, BtnCancelPuzzle, BtnClear, BtnBksp, BtnCopy
