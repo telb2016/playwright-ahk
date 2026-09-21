@@ -105,7 +105,11 @@ class RecordSession {
         if !FileExist(latest)
             return ""
         try {
-            return FileRead(latest, "UTF-8")
+            raw := FileRead(latest, "UTF-8")
+            ; Strip UTF-8 BOM if present
+            if SubStr(raw, 1, 1) = Chr(0xFEFF)
+                raw := SubStr(raw, 2)
+            return raw
         } catch {
             return ""
         }

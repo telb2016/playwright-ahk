@@ -16,6 +16,7 @@ class ChipDrag {
     static LastOver := false
     static LastTip := ""
     static OwnerHwnd := 0        ; main app hwnd — cancel if focus leaves app/ghost
+    static FocusMisses := 0      ; grace: ToolTip/transient windows can steal focus briefly
 
     static RegisterChip(hwnd, piece) {
         if hwnd
@@ -62,6 +63,7 @@ class ChipDrag {
         }
         ChipDrag.LastOver := false
         ChipDrag.LastTip := ""
+        ChipDrag.FocusMisses := 0
         SetTimer(ChipDrag.Poll, 16)
     }
 
@@ -82,11 +84,17 @@ class ChipDrag {
             ChipDrag.Cancel()
             return
         }
-        ; Cancel if owner app lost foreground (alt-tab / tray hide)
+        ; Cancel if owner app lost foreground (alt-tab / tray hide).
+        ; Allow a few misses — AHK ToolTip / DWM can briefly steal focus.
         if ChipDrag.OwnerHwnd && !ChipDrag.FocusInApp() {
-            SetTimer(ChipDrag.Poll, 0)
-            ChipDrag.Cancel()
-            return
+            ChipDrag.FocusMisses += 1
+            if ChipDrag.FocusMisses >= 12 {  ; ~200ms at 16ms poll
+                SetTimer(ChipDrag.Poll, 0)
+                ChipDrag.Cancel()
+                return
+            }
+        } else {
+            ChipDrag.FocusMisses := 0
         }
         MouseGetPos(&mx, &my)
         if !st.dragging {

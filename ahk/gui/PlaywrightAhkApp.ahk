@@ -19,7 +19,7 @@ global RepoRoot
 global EdPrompt, EdReply, BtnSend, BtnCancelCopilot, BtnUseReply
 global EdRecording, EdRecordUrl, EdRecordInstr, BtnRecord, BtnSendRecording
 global BtnSaveAsTest, BtnRunSavedTest, LblRecording
-global BtnReloadLatest, BtnOpenRec, BtnCancelRecord
+global BtnReloadLatest, BtnCopyRec, BtnOpenRec, BtnCancelRecord
 global RecordJob, BusyRecord, LastSavedSpec
 global EdCanvas, EdTerminal, BtnRun, BtnCancelPuzzle
 global Catalog, Canvas
@@ -30,7 +30,7 @@ global ActiveTab, BtnTab1, BtnTab2
 global Tab1Ctrls, Tab2Ctrls
 global WipeGui, WipeLbl, WipeActive, WipeDir, WipeStep, WipeTarget
 global LastWinW, LastWinH, LastWinX, LastWinY
-global AppVisible
+global AppVisible, HidingToTray
 global ChipBtns, EdChipFilter, LblNoChipMatch
 global JobStartCopilot, JobStartPuzzle
 
@@ -50,6 +50,7 @@ LastWinH := 720
 LastWinX := ""
 LastWinY := ""
 AppVisible := true
+HidingToTray := false
 ChipBtns := []
 JobStartCopilot := 0
 JobStartPuzzle := 0
@@ -217,13 +218,17 @@ ClampWindowPos() {
 }
 
 HideToTray() {
-    global AppGui, AppVisible
+    global AppGui, AppVisible, HidingToTray
+    if HidingToTray
+        return
+    HidingToTray := true
     ChipDrag.Cancel()
     SaveIniAll()
     AppVisible := false
     try AppGui.Hide()
     UpdateTrayTip()
     TrayTip("Playwright AHK", "Hidden to tray — Ctrl+Alt+P to restore", "Iconi")
+    HidingToTray := false
 }
 
 BuildGui() {
@@ -231,7 +236,7 @@ BuildGui() {
     global EdPrompt, EdReply, BtnSend, BtnCancelCopilot, BtnUseReply
     global EdRecording, EdRecordUrl, EdRecordInstr, BtnRecord, BtnSendRecording
     global BtnSaveAsTest, BtnRunSavedTest, LblRecording
-    global BtnReloadLatest, BtnOpenRec, BtnCancelRecord
+    global BtnReloadLatest, BtnCopyRec, BtnOpenRec, BtnCancelRecord
     global RecordJob, BusyRecord, LastSavedSpec
     global EdCanvas, EdTerminal, BtnRun, BtnCancelPuzzle
     global Catalog, Tab1Ctrls, Tab2Ctrls, ChipBtns, EdChipFilter, LblNoChipMatch
@@ -331,10 +336,13 @@ BuildGui() {
     BtnRunSavedTest.Enabled := false
     BtnRunSavedTest.OnEvent("Click", OnRunSavedTest)
 
-    BtnReloadLatest := AppGui.Add("Button", "x" rightX " y566 w" (rightW // 2 - 4) " h26", "Reload latest")
+    BtnReloadLatest := AppGui.Add("Button", "x" rightX " y566 w" (rightW // 3 - 4) " h26", "Reload")
     Theme.StyleButton(BtnReloadLatest)
     BtnReloadLatest.OnEvent("Click", OnReloadLatestSpec)
-    BtnOpenRec := AppGui.Add("Button", "x" (rightX + rightW // 2 + 4) " y566 w" (rightW // 2 - 4) " h26", "Open recordings")
+    BtnCopyRec := AppGui.Add("Button", "x" (rightX + rightW // 3) " y566 w" (rightW // 3 - 4) " h26", "Copy spec")
+    Theme.StyleButton(BtnCopyRec)
+    BtnCopyRec.OnEvent("Click", OnCopyRecording)
+    BtnOpenRec := AppGui.Add("Button", "x" (rightX + 2 * rightW // 3) " y566 w" (rightW // 3) " h26", "Recordings")
     Theme.StyleButton(BtnOpenRec)
     BtnOpenRec.OnEvent("Click", OnOpenRecordingsFolder)
 
@@ -342,7 +350,7 @@ BuildGui() {
         , BtnUseReply, BtnSavePrompt, t1ReplyLbl, EdReply
         , LblRecording, t1RecHint, t1UrlLbl, EdRecordUrl, BtnRecord, BtnCancelRecord, t1SpecLbl, EdRecording
         , t1InstrLbl, EdRecordInstr, BtnSendRecording, BtnSaveAsTest, BtnRunSavedTest
-        , BtnReloadLatest, BtnOpenRec]
+        , BtnReloadLatest, BtnCopyRec, BtnOpenRec]
 
     ; ----- Tab 2 content -----
     t2Hint := AppGui.Add("Text", "x24 y56 w900 c" Theme.FgDim,
@@ -468,6 +476,8 @@ BuildGui() {
     Hotkey("^l", OnClearChipFilter)
     Hotkey("^r", OnReloadLatestSpec)
     Hotkey("^z", OnCanvasUndo)
+    Hotkey("F6", OnFocusChipFilter)
+    Hotkey("F7", OnFocusCanvas)
     HotIf()
 
     ; Autosave prompt/canvas/terminal every 60s while running
@@ -609,7 +619,7 @@ OnResize(thisGui, minMax, width, height) {
     global StatusBar, EdPrompt, EdReply, EdCanvas, EdTerminal
     global EdRecording, EdRecordUrl, EdRecordInstr, BtnRecord, BtnSendRecording
     global BtnSaveAsTest, BtnRunSavedTest, LblRecording
-    global BtnReloadLatest, BtnOpenRec, BtnCancelRecord
+    global BtnReloadLatest, BtnCopyRec, BtnOpenRec, BtnCancelRecord
     if minMax = -1 {
         ; Minimize → tray (same as Close)
         HideToTray()
@@ -638,8 +648,9 @@ OnResize(thisGui, minMax, width, height) {
             try BtnSendRecording.Move(rightX, instrY + 90, rightW, 30)
             try BtnSaveAsTest.Move(rightX, instrY + 126, rightW // 2 - 4, 28)
             try BtnRunSavedTest.Move(rightX + rightW // 2 + 4, instrY + 126, rightW // 2 - 4, 28)
-            try BtnReloadLatest.Move(rightX, instrY + 160, rightW // 2 - 4, 26)
-            try BtnOpenRec.Move(rightX + rightW // 2 + 4, instrY + 160, rightW // 2 - 4, 26)
+            try BtnReloadLatest.Move(rightX, instrY + 160, rightW // 3 - 4, 26)
+            try BtnCopyRec.Move(rightX + rightW // 3, instrY + 160, rightW // 3 - 4, 26)
+            try BtnOpenRec.Move(rightX + 2 * rightW // 3, instrY + 160, rightW // 3, 26)
             EdCanvas.Move(24, , Min(contentW - 220, 700), )
             EdTerminal.Move(24, , contentW, )
         }
@@ -797,6 +808,13 @@ PollCopilot() {
 
 ; ---------- Puzzle chips / canvas ----------
 
+SetChipButtonsEnabled(enabled) {
+    global ChipBtns
+    for item in ChipBtns {
+        try item.btn.Enabled := enabled
+    }
+}
+
 AddPieceToCanvas(piece) {
     global Canvas, Catalog, AppGui, EdCanvas
     argv := Catalog.ResolvePieceArgv(piece, AppGui.Hwnd)
@@ -949,6 +967,7 @@ OnPuzzleRun(*) {
 
     BusyPuzzle := true
     UpdateTrayTip()
+    SetChipButtonsEnabled(false)
     try BtnRun.Enabled := false
     try BtnCancelPuzzle.Enabled := true
     EdTerminal.Value := "cwd: " RepoRoot "`n--- async run (stop on first nonzero) ---`n"
@@ -958,6 +977,7 @@ OnPuzzleRun(*) {
     if PuzzleJob.done && InStr(PuzzleJob.output, "empty slots") {
         EdTerminal.Value := PuzzleJob.output
         BusyPuzzle := false
+        SetChipButtonsEnabled(true)
         try BtnRun.Enabled := true
         try BtnCancelPuzzle.Enabled := false
         SetStatus("Run blocked")
@@ -979,6 +999,7 @@ OnPuzzleCancel(*) {
     EdTerminal.Value := "cwd: " RepoRoot "`n" PuzzleJob.output
     BusyPuzzle := false
     UpdateTrayTip()
+    SetChipButtonsEnabled(true)
     try BtnRun.Enabled := true
     try BtnCancelPuzzle.Enabled := false
     SetStatus("Puzzle run cancelled")
@@ -1013,6 +1034,7 @@ PollPuzzle() {
     code := PuzzleJob.exitCode
     BusyPuzzle := false
     UpdateTrayTip()
+    SetChipButtonsEnabled(true)
     try BtnRun.Enabled := true
     try BtnCancelPuzzle.Enabled := false
     elapsed := Round((A_TickCount - JobStartPuzzle) / 1000)
@@ -1159,6 +1181,22 @@ SaveIniAll() {
             }
         }
     }
+}
+
+OnFocusChipFilter(*) {
+    global ActiveTab, EdChipFilter
+    if ActiveTab != 2
+        RequestTab(2)
+    try EdChipFilter.Focus()
+    SetStatus("Filter focused (F6)")
+}
+
+OnFocusCanvas(*) {
+    global ActiveTab, EdCanvas
+    if ActiveTab != 2
+        RequestTab(2)
+    try EdCanvas.Focus()
+    SetStatus("Canvas focused (F7)")
 }
 
 OnClearChipFilter(*) {
@@ -1416,6 +1454,12 @@ OnEditLatestSpec(*) {
         Run('"' latest '"')
     }
     SetStatus("Opened latest.spec.js in editor")
+}
+
+OnCopyRecording(*) {
+    global EdRecording
+    A_Clipboard := EdRecording.Value
+    SetStatus("Recording spec copied to clipboard", "ok")
 }
 
 OnReloadLatestSpec(*) {
