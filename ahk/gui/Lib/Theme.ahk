@@ -156,4 +156,34 @@ class Theme {
         WinWaitClose("ahk_id " hwnd)
         return result
     }
+
+
+    ; Dark OK-only info dialog.
+    static InfoDark(message, title := "Playwright AHK", ownerHwnd := 0) {
+        done := false
+        opts := "+AlwaysOnTop -MinimizeBox -MaximizeBox +MinSize380x140"
+        if ownerHwnd
+            opts .= " +Owner" ownerHwnd
+        g := Gui(opts, title)
+        Theme.StyleGui(g)
+        g.MarginX := 16
+        g.MarginY := 14
+        g.Add("Text", "w360 c" Theme.Fg, message)
+        btn := g.Add("Button", "xm w100 h30 Default", "OK")
+        Theme.StyleButton(btn, true)
+        Finish(*) {
+            if done
+                return
+            done := true
+            g.Destroy()
+        }
+        btn.OnEvent("Click", Finish)
+        g.OnEvent("Close", Finish)
+        g.OnEvent("Escape", Finish)
+        hwnd := g.Hwnd
+        Theme.ApplyDarkTitleBar(hwnd)
+        g.Show("w400")
+        try btn.Focus()
+        WinWaitClose("ahk_id " hwnd)
+    }
 }

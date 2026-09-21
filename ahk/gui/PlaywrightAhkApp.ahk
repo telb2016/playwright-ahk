@@ -31,7 +31,7 @@ global Tab1Ctrls, Tab2Ctrls
 global WipeGui, WipeLbl, WipeActive, WipeDir, WipeStep, WipeTarget
 global LastWinW, LastWinH, LastWinX, LastWinY
 global AppVisible
-global ChipBtns, EdChipFilter
+global ChipBtns, EdChipFilter, LblNoChipMatch
 global JobStartCopilot, JobStartPuzzle
 
 CopilotJob := ""
@@ -99,9 +99,24 @@ SetupTray() {
     A_TrayMenu.Add("Save now`tCtrl+S", (*) => (SaveIniAll(), TrayTip("Saved", "Prompt/canvas/terminal persisted", "Iconi")))
     A_TrayMenu.Add("Cancel busy jobs", OnTrayCancelJobs)
     A_TrayMenu.Add()
+    A_TrayMenu.Add("Open recordings folder", (*) => (ShowAndFocus(), OnOpenRecordingsFolder()))
+    A_TrayMenu.Add("Edit latest.spec.js", (*) => OnEditLatestSpec())
+    A_TrayMenu.Add("Open repo folder", (*) => (ShowAndFocus(), OnOpenRepoFolder()))
+    A_TrayMenu.Add("&Hotkeys / help", OnTrayHelp)
+    A_TrayMenu.Add()
     A_TrayMenu.Add("E&xit", OnTrayExit)
     A_TrayMenu.Default := "&Show / Focus`tCtrl+Alt+P"
     A_TrayMenu.ClickCount := 1
+}
+
+OnTrayHelp(*) {
+    global AppGui
+    msg := "Ctrl+Alt+P tray · Ctrl+1/2 tabs · Ctrl+Enter Send · F5 Run`n"
+        . "Ctrl+S save · Ctrl+Z undo canvas · Ctrl+L clear filter · Ctrl+R reload latest`n"
+        . "Ctrl+Shift+C/T copy cmd/terminal · Delete backspace · Esc cancel drag`n"
+        . "Close/minimize → tray · Exit on tray menu · Right-click chip copies argv"
+    ; One-button dark info
+    Theme.InfoDark(msg, "Hotkeys / help", AppGui.Hwnd)
 }
 
 OnTrayCancelJobs(*) {
@@ -219,7 +234,7 @@ BuildGui() {
     global BtnReloadLatest, BtnOpenRec, BtnCancelRecord
     global RecordJob, BusyRecord, LastSavedSpec
     global EdCanvas, EdTerminal, BtnRun, BtnCancelPuzzle
-    global Catalog, Tab1Ctrls, Tab2Ctrls, ChipBtns, EdChipFilter
+    global Catalog, Tab1Ctrls, Tab2Ctrls, ChipBtns, EdChipFilter, LblNoChipMatch
     global BtnTab1, BtnTab2, WipeGui, WipeLbl
 
     AppGui := Gui("+Resize +MinSize1000x640", "Playwright AHK — Overnight GUI")
@@ -340,6 +355,8 @@ BuildGui() {
     BtnClearFilter := AppGui.Add("Button", "x740 y82 w50 h26", "Clear")
     Theme.StyleButton(BtnClearFilter)
     BtnClearFilter.OnEvent("Click", OnClearChipFilter)
+    LblNoChipMatch := AppGui.Add("Text", "x800 y86 w160 c" Theme.FgDim, "")
+    try LblNoChipMatch.SetFont("s9 c" Theme.FgDim, "Segoe UI")
 
     chipCtrls := []
     ChipBtns := []
@@ -416,13 +433,13 @@ BuildGui() {
     EdTerminal := AppGui.Add("Edit", "x24 y" (termTop + 22) " w920 h160 Multi ReadOnly VScroll", "")
     Theme.StyleEdit(EdTerminal)
 
-    Tab2Ctrls := [t2Hint, t2PiecesLbl, t2FilterLbl, EdChipFilter, BtnClearFilter]
+    Tab2Ctrls := [t2Hint, t2PiecesLbl, t2FilterLbl, EdChipFilter, BtnClearFilter, LblNoChipMatch]
     for c in chipCtrls
         Tab2Ctrls.Push(c)
     Tab2Ctrls.Push(t2CanvasLbl, EdCanvas, BtnRun, BtnCancelPuzzle, BtnClear, BtnBksp, BtnCopy
         , BtnSaveCanvas, BtnSeed, t2TermLbl, BtnCopyTerm, BtnClearTerm, BtnOpenRepo, EdTerminal)
 
-    StatusBar := AppGui.Add("Text", "x10 y675 w960 h24", " Ready")
+    StatusBar := AppGui.Add("Text", "x10 y675 w960 h24 +0x100", " Ready")  ; SS_NOTIFY for click
     Theme.StyleStatus(StatusBar)
     StatusBar.OnEvent("Click", OnStatusBarClick)
     StatusBar.OnEvent("DoubleClick", OnStatusBarClick)
@@ -450,6 +467,7 @@ BuildGui() {
     Hotkey("^2", (*) => RequestTab(2))
     Hotkey("^l", OnClearChipFilter)
     Hotkey("^r", OnReloadLatestSpec)
+    Hotkey("^z", OnCanvasUndo)
     HotIf()
 
     ; Autosave prompt/canvas/terminal every 60s while running
@@ -592,8 +610,11 @@ OnResize(thisGui, minMax, width, height) {
     global EdRecording, EdRecordUrl, EdRecordInstr, BtnRecord, BtnSendRecording
     global BtnSaveAsTest, BtnRunSavedTest, LblRecording
     global BtnReloadLatest, BtnOpenRec, BtnCancelRecord
-    if minMax = -1
+    if minMax = -1 {
+        ; Minimize → tray (same as Close)
+        HideToTray()
         return
+    }
     try {
         StatusBar.Move(10, height - 34, width - 20, 24)
         contentW := width - 48
@@ -828,6 +849,32 @@ OnPuzzleClear(*) {
     RefreshCanvasEdit()
     SaveIniAll()
     SetStatus("Canvas cleared")
+}
+
+OnCanvasUndo(*) {
+    global ActiveTab, Canvas, EdCanvas
+    if ActiveTab != 2 {
+        RequestTab(2)
+        return
+    }
+    ; Prefer model backspace; fall back to text line pop
+    lines := Canvas.LinesFromText(EdCanvas.Value)
+    if Canvas.Count() != lines.Length
+        Canvas.RebuildFromText(EdCanvas.Value)
+    if Canvas.Backspace() {
+        RefreshCanvasEdit()
+        SaveIniAll()
+        SetStatus("Undo — removed last canvas piece", "ok")
+        return
+    }
+    if Trim(EdCanvas.Value) = "" {
+        SetStatus("Canvas already empty")
+        return
+    }
+    EdCanvas.Value := Canvas.BackspaceText(EdCanvas.Value)
+    Canvas.RebuildFromText(EdCanvas.Value)
+    SaveIniAll()
+    SetStatus("Undo — removed last canvas line", "ok")
 }
 
 OnPuzzleBackspace(*) {
@@ -1125,7 +1172,7 @@ OnClearChipFilter(*) {
 }
 
 OnChipFilterChange(*) {
-    global ChipBtns, EdChipFilter, ActiveTab
+    global ChipBtns, EdChipFilter, ActiveTab, LblNoChipMatch
     if ActiveTab != 2
         return
     q := StrLower(Trim(EdChipFilter.Value))
@@ -1135,6 +1182,12 @@ OnChipFilterChange(*) {
         try item.btn.Visible := match
         if match
             shown += 1
+    }
+    try {
+        if q != "" && shown = 0
+            LblNoChipMatch.Value := "No matching pieces"
+        else
+            LblNoChipMatch.Value := ""
     }
     ; Debounce status spam while typing
     global ChipFilterShown
@@ -1349,6 +1402,21 @@ OnRunSavedTest(*) {
 }
 
 
+
+OnEditLatestSpec(*) {
+    global RepoRoot
+    latest := RecordSession.LatestPath(RepoRoot)
+    if !FileExist(latest) {
+        SetStatus("No latest.spec.js to edit", "err")
+        try TrayTip("Edit latest", "missing recordings\latest.spec.js", "Iconx")
+        return
+    }
+    try Run('notepad.exe "' latest '"')
+    catch {
+        Run('"' latest '"')
+    }
+    SetStatus("Opened latest.spec.js in editor")
+}
 
 OnReloadLatestSpec(*) {
     global RepoRoot, EdRecording, BusyRecord

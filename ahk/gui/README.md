@@ -130,6 +130,7 @@ scripts/puzzle-pieces.json     ← Tab 2 catalog (repo root)
 - Tray Exit confirms when jobs busy; block Send/Run during train wipe.
 - Chip hover tooltips + right-click copies argv; click status bar to copy message.
 - Stronger incomplete-slot heuristics (`--grep=""`, screenshot/pdf missing out).
+- Minimize→tray; Ctrl+Z canvas undo; filter “No matching pieces”; tray Help + Edit latest.spec.js.
 
 ### PR #4 — `ahk/overnight-polish` (merged)
 - **Chip→canvas drag-drop** — drag chips onto the canvas (ghost + drop target); click-to-add kept as fallback; Esc cancels drag; canvas highlights while hovered.
