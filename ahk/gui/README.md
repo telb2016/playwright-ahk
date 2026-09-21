@@ -119,6 +119,17 @@ scripts/puzzle-pieces.json     ← Tab 2 catalog (repo root)
 - Louder Copilot auth / login-required banner in reply pane.
 - Hotkeys: Ctrl+Enter Send (Tab1), F5 Run (Tab2), Delete Backspace piece (Tab2).
 
+## Ini keys (`PlaywrightAhkApp.ini` next to the script)
+
+| Section | Key | Purpose |
+|---------|-----|---------|
+| Copilot | LastPrompt | Tab 1 prompt (`\n` escaped) |
+| Puzzle | Canvas | Command canvas text |
+| Puzzle | LastTerminal | Last terminal mirror (capped ~48k) |
+| Puzzle | ChipFilter | Piece filter substring |
+| UI | ActiveTab | `1` or `2` |
+| UI | Width / Height / X / Y | Window geometry |
+
 ## Known limitations
 
 - GUI is Windows-native AHK; not exercised on Linux CI.
