@@ -550,6 +550,52 @@ class UiaCore {
         return false
     }
 
+    ; Double-click at clickable point / bounds center (InvokePattern is single-activate).
+    static InvokeDoubleClick(el) {
+        if !IsObject(el)
+            return false
+        try {
+            cp := UiaCore.Prop(el, UiaCore.P_ClickablePoint)
+            if IsObject(cp) {
+                Click(cp[1] " " cp[2] " 2")
+                return true
+            }
+        }
+        try {
+            rect := UiaCore.Prop(el, UiaCore.P_BoundingRectangle)
+            if rect is Array || (IsObject(rect) && rect.HasProp("Length") && rect.Length = 4) {
+                x := Round((rect[1] + rect[3]) / 2)
+                y := Round((rect[2] + rect[4]) / 2)
+                Click(x " " y " 2")
+                return true
+            }
+        }
+        return false
+    }
+
+    ; Move cursor to element center (for wheel / focus) without clicking.
+    static MoveToElement(el) {
+        if !IsObject(el)
+            return false
+        try {
+            cp := UiaCore.Prop(el, UiaCore.P_ClickablePoint)
+            if IsObject(cp) {
+                MouseMove(cp[1], cp[2], 0)
+                return true
+            }
+        }
+        try {
+            rect := UiaCore.Prop(el, UiaCore.P_BoundingRectangle)
+            if rect is Array || (IsObject(rect) && rect.HasProp("Length") && rect.Length = 4) {
+                x := Round((rect[1] + rect[3]) / 2)
+                y := Round((rect[2] + rect[4]) / 2)
+                MouseMove(x, y, 0)
+                return true
+            }
+        }
+        return false
+    }
+
     ; Focused UIA element → same descriptor Map as ElementFromScreenPoint (or "").
     static GetFocusedDescribe() {
         if !UiaCore.Ensure()
@@ -603,18 +649,50 @@ class UiaCore {
         return false
     }
 
-    static SoftClickRelative(hwnd, relX, relY, right := false) {
-
+    static SoftClickRelative(hwnd, relX, relY, right := false, clickCount := 1) {
         if !hwnd
             return false
         try {
             WinGetPos(&wx, &wy, &ww, &wh, "ahk_id " hwnd)
             x := wx + Round(relX * ww)
             y := wy + Round(relY * wh)
-            Click(x " " y (right ? " Right" : ""))
+            if right
+                Click(x " " y " Right")
+            else if clickCount >= 2
+                Click(x " " y " " Integer(clickCount))
+            else
+                Click(x " " y)
             return true
         }
         return false
+    }
+
+    ; Move to window-relative point then emit WheelUp/WheelDown notches (signed: +up / -down).
+    static SoftWheelRelative(hwnd, relX, relY, notches) {
+        if !hwnd
+            return false
+        notches := Integer(notches)
+        if notches = 0
+            return true
+        try {
+            WinGetPos(&wx, &wy, &ww, &wh, "ahk_id " hwnd)
+            x := wx + Round(relX * ww)
+            y := wy + Round(relY * wh)
+            MouseMove(x, y, 0)
+            return UiaCore.WheelAtCursor(notches)
+        }
+        return false
+    }
+
+    static WheelAtCursor(notches) {
+        notches := Integer(notches)
+        if notches = 0
+            return true
+        dir := notches > 0 ? "WheelUp" : "WheelDown"
+        n := Abs(notches)
+        loop n
+            Click(dir)
+        return true
     }
 
     ; Wait until element matching ranked targets exists (verify).
