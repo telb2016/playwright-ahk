@@ -120,9 +120,10 @@ class ScreenSpots {
         sx := rect["x"] + Round(rx * rect["w"])
         sy := rect["y"] + Round(ry * rect["h"])
         try {
-            ; PixelGetColor returns 0xBBGGRR by default; use RGB mode
+            ; ClientToScreen yields screen coords — force PixelGetColor to Screen mode
+            CoordMode("Pixel", "Screen")
             col := PixelGetColor(sx, sy, "RGB")
-            return Map("rx", rx, "ry", ry, "rgb", col, "sx", sx, "sy", sy)
+            return Map("rx", rx, "ry", ry, "rgb", col)
         } catch {
             return ""
         }

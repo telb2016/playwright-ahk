@@ -489,6 +489,10 @@ class DesktopRecord {
                 hwndSpot := Integer(step["window"]["Hwnd"])
             if !hwndSpot
                 hwndSpot := hwndUnder
+            try {
+                if hwndSpot
+                    WinActivate("ahk_id " hwndSpot)
+            }
             fs := ScreenSpots.IsProbablyFullscreen(hwndSpot)
             if fs
                 this.noteFullscreen := true
