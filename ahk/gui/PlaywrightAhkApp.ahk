@@ -35,7 +35,7 @@ global AppVisible, HidingToTray
 global ChipBtns, EdChipFilter, LblNoChipMatch
 global JobStartCopilot, JobStartPuzzle
 
-global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr
+global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr, ChkStrictSpots
 global BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskSend, BtnDeskClear
 global BusyDesktop
 
@@ -476,8 +476,13 @@ BuildGui() {
     t3Banner := AppGui.Add("Text", "x24 y56 w920 c" Theme.Err,
         "WINDOWS DESKTOP UIA RECORDER — AutoHotkey + UI Automation only. Never Playwright / npx / @playwright/test.")
     try t3Banner.SetFont("s10 Bold c" Theme.Err, "Segoe UI")
-    t3Hint := AppGui.Add("Text", "x24 y80 w920 c" Theme.FgDim,
-        "Record clicks via IUIAutomation (ranked: AutomationId → Name+ControlType → LocalizedType+index). Soft window-relative = last resort only. Hard-fail on wrong process/window class.")
+    t3Hint := AppGui.Add("Text", "x24 y78 w700 c" Theme.FgDim,
+        "UIA ranked targets identify the control. Strict spots = client-area % checksums (not taskbar). Display profile hard-fails on DPI/resolution/monitor change.")
+
+    ChkStrictSpots := AppGui.Add("CheckBox", "x740 y76 w200 c" Theme.Fg, "Strict fullscreen spots")
+    try ChkStrictSpots.Value := 1
+    try ChkStrictSpots.SetFont("s9 c" Theme.Fg, "Segoe UI")
+    ChkStrictSpots.OnEvent("Click", OnStrictSpotsToggle)
 
     t3StepsLbl := AppGui.Add("Text", "x24 y108 w500", "Steps JSON (kind: windows-uia)")
     EdDesktopJson := AppGui.Add("Edit", "x24 y128 w700 h280 Multi WantReturn VScroll", "")
@@ -525,7 +530,7 @@ BuildGui() {
     EdDesktopLog := AppGui.Add("Edit", "x24 y440 w700 h160 Multi ReadOnly VScroll", "")
     Theme.StyleEdit(EdDesktopLog)
 
-    Tab3Ctrls := [t3Banner, t3Hint, t3StepsLbl, EdDesktopJson
+    Tab3Ctrls := [t3Banner, t3Hint, ChkStrictSpots, t3StepsLbl, EdDesktopJson
         , BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskOpenDir, BtnDeskLoad, BtnDeskClear, BtnDeskProbe
         , t3InstrLbl, EdDesktopInstr, BtnDeskSend, t3LogLbl, EdDesktopLog]
 
@@ -1637,6 +1642,14 @@ ScrollEditToEnd(ctrl) {
 
 ; ---------- Tab 3 — Windows Desktop UIA (NOT Playwright) ----------
 
+OnStrictSpotsToggle(*) {
+    global Desktop, ChkStrictSpots
+    Desktop.strictSpots := !!ChkStrictSpots.Value
+    SaveIniAll()
+    SetStatus(Desktop.strictSpots ? "Strict fullscreen spots ON (client-% checksums)" : "Strict fullscreen spots OFF", "ok")
+}
+
+
 DesktopStatusCb(msg, tone := "") {
     SetStatus(msg, tone)
 }
@@ -1647,7 +1660,7 @@ OnDesktopStepCaptured(step) {
 }
 
 OnDesktopRecord(*) {
-    global Desktop, ActiveTab, BtnDeskRecord, BtnDeskStop, BusyDesktop, WipeActive, BusyRecord, BusyPuzzle
+    global Desktop, ActiveTab, BtnDeskRecord, BtnDeskStop, BusyDesktop, WipeActive, BusyRecord, BusyPuzzle, ChkStrictSpots
     if WipeActive
         return
     if ActiveTab != 3
@@ -1656,6 +1669,7 @@ OnDesktopRecord(*) {
         SetStatus("Browser Record busy — finish Tab1 codegen first", "err")
         return
     }
+    try Desktop.strictSpots := !!ChkStrictSpots.Value
     if !Desktop.StartRecord()
         return
     BusyDesktop := true
@@ -1694,30 +1708,35 @@ OnDesktopStop(*) {
 }
 
 OnDesktopPlay(*) {
-    global Desktop, EdDesktopJson, EdDesktopLog, ActiveTab, BusyDesktop
+    global Desktop, EdDesktopJson, EdDesktopLog, ActiveTab, BusyDesktop, ChkStrictSpots
     if ActiveTab != 3
         RequestTab(3)
     if BusyDesktop || Desktop.recording {
         SetStatus("Stop desktop recording before Play", "err")
         return
     }
+    try Desktop.strictSpots := !!ChkStrictSpots.Value
     if !Desktop.LoadFromEdit(EdDesktopJson.Value)
         return
+    ; Keep UI toggle authoritative for this run
+    try Desktop.strictSpots := !!ChkStrictSpots.Value
     res := Desktop.Play(false)
     EdDesktopLog.Value := res.log
     ScrollEditToEnd(EdDesktopLog)
 }
 
 OnDesktopVerify(*) {
-    global Desktop, EdDesktopJson, EdDesktopLog, ActiveTab, BusyDesktop
+    global Desktop, EdDesktopJson, EdDesktopLog, ActiveTab, BusyDesktop, ChkStrictSpots
     if ActiveTab != 3
         RequestTab(3)
     if BusyDesktop || Desktop.recording {
         SetStatus("Stop desktop recording before Verify", "err")
         return
     }
+    try Desktop.strictSpots := !!ChkStrictSpots.Value
     if !Desktop.LoadFromEdit(EdDesktopJson.Value)
         return
+    try Desktop.strictSpots := !!ChkStrictSpots.Value
     res := Desktop.Verify()
     EdDesktopLog.Value := res.log
     ScrollEditToEnd(EdDesktopLog)
@@ -1750,6 +1769,7 @@ OnDesktopLoadLatest(*) {
         return
     }
     EdDesktopJson.Value := Desktop.ToJson()
+    try ChkStrictSpots.Value := Desktop.strictSpots ? 1 : 0
     SetStatus("Loaded " path, "ok")
 }
 

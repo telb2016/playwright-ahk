@@ -97,12 +97,13 @@ Bulletproof **AutoHotkey + UI Automation** recorder for the Windows machine itse
   2. `Name` + `ControlType`
   3. `LocalizedControlType` + index among siblings
   Soft **window-relative** click is rank 99 last-resort only (never primary verifier).
-- **Play / Verify** — resolve window by **process name + window class** (hard-fail if wrong). Try ranked targets in order with short wait-for-condition; one miss does **not** fail until the list is exhausted.
+- **Play / Verify** — order: (1) window/process class hard gate → (2) ranked UIA targets → (3) optional **Strict fullscreen spots**.
+- **Strict fullscreen spots** (Tab 3 toggle, default ON) — 9 client-area samples as **% of client W/H** (never taskbar/clock/tray). Settle wait ~200ms (spots unchanged) before hash. Playback allows ±Δ RGB + partial pass (~2/3). Snapshot **display profile** (resolution, DPI/scale, monitor count) — hard-fail early if changed. Pixel identity for *controls* remains last-resort soft only.
 - **Save** — `recordings/windows/desktop-*.json` (+ `.ahk` stub). Gitignored payloads; folder kept.
 - **Send desktop → Copilot** — seeds *AutoHotkey + UI Automation* — **never** `@playwright/test`. Separate from Tab 1 browser Record pane.
 - **Boundary** — Tab 3 never pipes into `npx playwright` / codegen / Save as test (Save as test explicitly refuses `windows-uia` / AHK UIA seed text).
 
-Controls: **Record · Stop · Play · Verify · Save · Folder · Clear · Probe · Send desktop → Copilot**. Hotkey `Ctrl+3`. Right-click is recorded; **Probe** dumps ranked targets under the cursor.
+Controls: **Record · Stop · Play · Verify · Save · Folder · Load · Clear · Probe · Strict spots toggle · Send desktop → Copilot**. Hotkey `Ctrl+3`.
 
 ## UX polish
 
@@ -127,6 +128,7 @@ ahk/gui/Lib/ChipDrag.ahk       ← chip→canvas DnD
 ahk/gui/Lib/RecordSession.ahk  ← headed codegen → latest.spec.js → Copilot
 ahk/gui/Lib/UiaCore.ahk         ← IUIAutomation helpers (Tab 3)
 ahk/gui/Lib/DesktopRecord.ahk   ← Windows desktop UIA record/play/verify
+ahk/gui/Lib/ScreenSpots.ahk     ← Strict fullscreen client-% spot verifier
 ahk/InvestorDemo.ahk
 ahk/Playwright.ahk             ← hardened wrappers (#Include)
 scripts/puzzle-pieces.json     ← Tab 2 catalog (repo root)
@@ -185,7 +187,7 @@ scripts/puzzle-pieces.json     ← Tab 2 catalog (repo root)
 | Record | Url / Instruction | Codegen start URL + Copilot instruction |
 | Record | LastSavedSpec | Absolute path of last Save as test (enables Run) |
 | SlotMemory | `<label>_<slot>` | Last OK slot editor values (grep/url/file/out) |
-| Desktop | Instruction / StepsJson | Tab 3 Copilot instruction + steps JSON (capped) |
+| Desktop | Instruction / StepsJson / StrictSpots | Tab 3 instruction, steps JSON, spots toggle |
 
 ## Known limitations
 

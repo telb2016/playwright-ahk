@@ -2,6 +2,7 @@
 ; Kind: windows-uia. NEVER feeds Playwright / @playwright/test.
 #Requires AutoHotkey v2.0
 #Include UiaCore.ahk
+#Include ScreenSpots.ahk
 ; Json.ahk must be included by the host script before this file.
 
 class DesktopRecord {
@@ -23,9 +24,13 @@ class DesktopRecord {
     onStep := ""         ; callback(stepMap)
     onStatus := ""       ; callback(msg, tone:="")
     lastPath := ""
+    strictSpots := true          ; Strict fullscreen spots (hybrid verifier) — UI toggle
+    sessionDisplay := ""         ; display profile captured at record start / first step
+    noteFullscreen := false      ; set when a recorded window looks fullscreen
 
     __New(repoRoot) {
         this.repoRoot := repoRoot
+        this.strictSpots := true
         DesktopRecord.EnsureDirs(repoRoot)
     }
 
@@ -38,17 +43,24 @@ class DesktopRecord {
     Clear() {
         this.steps := []
         this.lastPath := ""
+        this.sessionDisplay := ""
+        this.noteFullscreen := false
     }
 
     Count() => this.steps.Length
 
     ToMap() {
-        return Map(
+        m := Map(
             "version", DesktopRecord.Version,
             "kind", DesktopRecord.Kind,
             "created", FormatTime(, "yyyy-MM-dd'T'HH:mm:ss"),
+            "strictSpots", !!this.strictSpots,
+            "noteFullscreen", !!this.noteFullscreen,
             "steps", this.steps
         )
+        if IsObject(this.sessionDisplay)
+            m["display"] := this.sessionDisplay
+        return m
     }
 
     ToJson() {
@@ -143,6 +155,12 @@ class DesktopRecord {
             return false
         }
         this.steps := steps
+        if data.Has("strictSpots")
+            this.strictSpots := !!data["strictSpots"]
+        if data.Has("noteFullscreen")
+            this.noteFullscreen := !!data["noteFullscreen"]
+        if data.Has("display") && data["display"] is Map
+            this.sessionDisplay := data["display"]
         this._Status("Loaded " this.steps.Length " desktop UIA steps", "ok")
         return true
     }
@@ -160,8 +178,11 @@ class DesktopRecord {
         this.lastBtn := GetKeyState("LButton", "P")
         this.lastRBtn := GetKeyState("RButton", "P")
         this.lastClickTick := 0
+        this.sessionDisplay := ScreenSpots.CaptureDisplayProfile()
+        this.noteFullscreen := false
         SetTimer(this._Poll.Bind(this), DesktopRecord.MinPollMs)
-        this._Status("Desktop UIA recording… click UI targets (Esc/Stop to end)", "ok")
+        spotsNote := this.strictSpots ? " · Strict spots ON" : " · Strict spots OFF"
+        this._Status("Desktop UIA recording… click targets (Esc/Stop)" spotsNote, "ok")
         return true
     }
 
@@ -257,10 +278,28 @@ class DesktopRecord {
             ),
             "screen", Map("x", sx, "y", sy)
         )
+        ; Hybrid: client-area % spots (never taskbar) when Strict spots enabled
+        if this.strictSpots {
+            hwndSpot := 0
+            if step["window"].Has("Hwnd")
+                hwndSpot := Integer(step["window"]["Hwnd"])
+            if !hwndSpot
+                hwndSpot := hwndUnder
+            fs := ScreenSpots.IsProbablyFullscreen(hwndSpot)
+            if fs
+                this.noteFullscreen := true
+            pack := ScreenSpots.CapturePack(hwndSpot, fs)
+            step["spots"] := pack
+            if !IsObject(this.sessionDisplay) && pack.Has("display")
+                this.sessionDisplay := pack["display"]
+        }
         this.steps.Push(step)
         this._Emit(step)
         label := this.StepLabel(step)
-        this._Status("Recorded #" this.steps.Length ": " label, "ok")
+        extra := ""
+        if step.Has("spots") && step["spots"].Has("spots")
+            extra := " · spots " step["spots"]["spots"].Length
+        this._Status("Recorded #" this.steps.Length ": " label extra, "ok")
     }
 
     StepLabel(step) {
@@ -296,6 +335,25 @@ class DesktopRecord {
         failedAt := 0
         msg := ""
         ok := true
+
+        ; Early hard-fail: display profile (resolution/DPI/monitors)
+        if this.strictSpots {
+            recordedProf := ""
+            if IsObject(this.sessionDisplay)
+                recordedProf := this.sessionDisplay
+            else if this.steps.Length && this.steps[1] is Map && this.steps[1].Has("spots") && this.steps[1]["spots"].Has("display")
+                recordedProf := this.steps[1]["spots"]["display"]
+            if IsObject(recordedProf) {
+                cur := ScreenSpots.CaptureDisplayProfile()
+                if !ScreenSpots.ProfilesEqual(recordedProf, cur) {
+                    this.playing := false
+                    msg := ScreenSpots.ProfileDiffMessage(recordedProf, cur)
+                    this._Status(msg, "err")
+                    return { ok: false, failedAt: 0, message: msg, log: msg "`n" }
+                }
+            }
+        }
+
         for i, step in this.steps {
             this._Status((verifyOnly ? "Verify" : "Play") " step " i "/" this.steps.Length "…")
             res := this.RunStep(step, verifyOnly)
@@ -376,13 +434,20 @@ class DesktopRecord {
             ; Soft last-resort only after hard list exhausted
             if soft.Length {
                 st := soft[1]
-                if verifyOnly {
-                    return { ok: true, message: "VERIFY soft-only (no UIA hit) strategy=" st["strategy"] " — accepted as soft" }
-                }
                 if st.Has("relX") {
                     right := (step.Has("action") && step["action"] = "rightclick")
-                    if UiaCore.SoftClickRelative(hwnd, st["relX"], st["relY"], right)
-                        return { ok: true, message: "PLAY soft WindowRelative (last resort)" }
+                    if verifyOnly {
+                        spotRes := this._VerifyStepSpots(hwnd, step)
+                        if !spotRes.ok
+                            return spotRes
+                        return { ok: true, message: "VERIFY soft-only (no UIA hit) " st["strategy"] (spotRes.message != "" ? " · " spotRes.message : "") }
+                    }
+                    if UiaCore.SoftClickRelative(hwnd, st["relX"], st["relY"], right) {
+                        spotRes := this._VerifyStepSpots(hwnd, step)
+                        if !spotRes.ok
+                            return spotRes
+                        return { ok: true, message: "PLAY soft WindowRelative (last resort)" (spotRes.message != "" ? " · " spotRes.message : "") }
+                    }
                 }
                 return { ok: false, message: "FAIL soft fallback click" }
             }
@@ -390,7 +455,10 @@ class DesktopRecord {
         }
 
         if verifyOnly {
-            return { ok: true, message: "VERIFY ok via " used }
+            spotRes := this._VerifyStepSpots(hwnd, step)
+            if !spotRes.ok
+                return spotRes
+            return { ok: true, message: "VERIFY ok via " used (spotRes.message != "" ? " · " spotRes.message : "") }
         }
 
         action := step.Has("action") ? step["action"] : "click"
@@ -408,10 +476,31 @@ class DesktopRecord {
         Sleep(settle)
         ; Re-check element still addressable (property wait)
         check := UiaCore.ResolveFromTargets(hwnd, hard, 800)
-        if IsObject(check) && IsObject(check.el)
-            return { ok: true, message: "PLAY ok via " used " (post-check)" }
-        ; Post-check miss is warning-ish but action already invoked — treat OK if invoke succeeded
-        return { ok: true, message: "PLAY ok via " used " (post-check soft miss)" }
+        baseMsg := IsObject(check) && IsObject(check.el)
+            ? "PLAY ok via " used " (post-check)"
+            : "PLAY ok via " used " (post-check soft miss)"
+        spotRes := this._VerifyStepSpots(hwnd, step)
+        if !spotRes.ok
+            return spotRes
+        if spotRes.message != ""
+            baseMsg .= " · " spotRes.message
+        return { ok: true, message: baseMsg }
+    }
+
+    ; Hybrid spots after UIA (client-pct). Skipped when Strict spots OFF.
+    _VerifyStepSpots(hwnd, step) {
+        if !this.strictSpots
+            return { ok: true, message: "" }
+        if !(step is Map) || !step.Has("spots")
+            return { ok: true, message: "spots skipped (none recorded)" }
+        pack := step["spots"]
+        ; If recording noted not to use spots and pack empty — skip
+        if !(pack is Map)
+            return { ok: true, message: "" }
+        res := ScreenSpots.VerifyPack(hwnd, pack)
+        if res.ok
+            return { ok: true, message: res.message }
+        return { ok: false, message: res.message }
     }
 
     ; Load newest desktop-*.json from recordings/windows (by file time).
