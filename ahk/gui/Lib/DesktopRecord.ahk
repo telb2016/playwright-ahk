@@ -206,7 +206,7 @@ class DesktopRecord {
         this._StartWheelHotkeys()
         SetTimer(this._Poll.Bind(this), DesktopRecord.MinPollMs)
         spotsNote := this.strictSpots ? " · Strict spots ON" : " · Strict spots OFF"
-        this._Status("Desktop UIA recording… click/dblclick/wheel/type (Esc/Stop)" spotsNote, "ok")
+        this._Status("Desktop UIA recording… click/dblclick/rclick/wheel/type (Esc/Stop)" spotsNote, "ok")
         return true
     }
 
@@ -583,21 +583,24 @@ class DesktopRecord {
         }
         down := GetKeyState("LButton", "P")
         if down && !this.lastBtn {
-            SetTimer(this._FlushTypeIdle.Bind(this), 0)
-            this._FlushTypeBatch("before-click")
-            this._FlushWheelBatch("before-click")
-            this._OnLeftClickEdge()
+            if !this._ShouldSkipTyping() {
+                SetTimer(this._FlushTypeIdle.Bind(this), 0)
+                this._FlushTypeBatch("before-click")
+                this._FlushWheelBatch("before-click")
+                this._OnLeftClickEdge()
+            }
         }
         this.lastBtn := down
         rdown := GetKeyState("RButton", "P")
         if rdown && !this.lastRBtn {
-            if (A_TickCount - this.lastClickTick) >= DesktopRecord.ClickDebounceMs {
+            ; Right-button down edge — mirror left-click debounce (~180ms); never emit left-click
+            if !this._ShouldSkipTyping() && (A_TickCount - this.lastClickTick) >= DesktopRecord.ClickDebounceMs {
                 this.lastClickTick := A_TickCount
                 SetTimer(this._FlushTypeIdle.Bind(this), 0)
-                this._FlushTypeBatch("before-click")
-                this._FlushWheelBatch("before-click")
-                this._FlushPendingClick()  ; commit pending left before rightclick
-                this._CaptureClick("rightclick")
+                this._FlushTypeBatch("before-rclick")
+                this._FlushWheelBatch("before-rclick")
+                this._FlushPendingClick()  ; commit pending left before rclick
+                this._CaptureClick("rclick")
             }
         }
         this.lastRBtn := rdown
@@ -759,8 +762,8 @@ class DesktopRecord {
         }
         if action = "dblclick"
             return "dblclick " target
-        if action = "rightclick"
-            return "rightclick " target
+        if action = "rclick" || action = "rightclick"
+            return "rclick " target
         return "click " target
     }
 
@@ -909,7 +912,7 @@ class DesktopRecord {
             if soft.Length {
                 st := soft[1]
                 if st.Has("relX") {
-                    right := (actionEarly = "rightclick")
+                    right := (actionEarly = "rclick" || actionEarly = "rightclick")
                     dbl := (actionEarly = "dblclick")
                     if verifyOnly {
                         spotRes := this._VerifyStepSpots(hwnd, step)
@@ -978,10 +981,10 @@ class DesktopRecord {
         if action = "wheel" {
             return this._PlayWheel(hwnd, step, resolved, used, hard)
         }
-        if action = "rightclick" {
+        if action = "rclick" || action = "rightclick" {
             ; Prefer clickable/bounds right-click (Invoke is left-default)
             if !UiaCore.InvokeRightClick(resolved.el) {
-                return { ok: false, message: "FAIL right-click via " used }
+                return { ok: false, message: "FAIL rclick via " used }
             }
         } else if action = "dblclick" {
             if !UiaCore.InvokeDoubleClick(resolved.el) {
