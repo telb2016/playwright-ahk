@@ -35,7 +35,7 @@ global AppVisible, HidingToTray
 global ChipBtns, EdChipFilter, LblNoChipMatch
 global JobStartCopilot, JobStartPuzzle
 
-global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr, ChkStrictSpots, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown
+global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr, ChkStrictSpots, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown, BtnStepWait
 global BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskSend, BtnDeskClear
 global BusyDesktop
 
@@ -262,7 +262,7 @@ BuildGui() {
     global EdCanvas, EdTerminal, BtnRun, BtnCancelPuzzle
     global Catalog, Tab1Ctrls, Tab2Ctrls, Tab3Ctrls, ChipBtns, EdChipFilter, LblNoChipMatch
     global BtnTab1, BtnTab2, BtnTab3, WipeGui, WipeLbl
-    global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown
+    global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown, BtnStepWait
     global BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskOpenDir, BtnDeskLoad, BtnDeskSend, BtnDeskClear, BtnDeskProbe
 
     AppGui := Gui("+Resize +MinSize1000x640", "Playwright AHK — Overnight GUI")
@@ -480,7 +480,7 @@ BuildGui() {
         "WINDOWS DESKTOP UIA RECORDER — AutoHotkey + UI Automation only. Never Playwright / npx / @playwright/test.")
     try t3Banner.SetFont("s10 Bold c" Theme.Err, "Segoe UI")
     t3Hint := AppGui.Add("Text", "x24 y78 w700 c" Theme.FgDim,
-        "UIA ranked targets · click/dblclick/rclick/drag/wheel/type/key. Strict spots = client-% checksums. Play highlights the current ListBox step.")
+        "UIA ranked targets · click/dblclick/rclick/drag/wheel/type/key/wait. Strict spots = client-% checksums. Play highlights the current ListBox step.")
 
     ChkStrictSpots := AppGui.Add("CheckBox", "x740 y76 w200 c" Theme.Fg, "Strict fullscreen spots")
     try ChkStrictSpots.Value := 1
@@ -493,15 +493,18 @@ BuildGui() {
     try LbDesktopSteps.SetFont("s9 c" Theme.Fg, "Consolas")
     LbDesktopSteps.OnEvent("DoubleClick", OnDesktopStepDelete)
 
-    BtnStepDel := AppGui.Add("Button", "x24 y384 w78 h26", "Delete")
+    BtnStepDel := AppGui.Add("Button", "x24 y384 w58 h26", "Delete")
     Theme.StyleButton(BtnStepDel)
     BtnStepDel.OnEvent("Click", OnDesktopStepDelete)
-    BtnStepUp := AppGui.Add("Button", "x106 y384 w78 h26", "Up")
+    BtnStepUp := AppGui.Add("Button", "x86 y384 w48 h26", "Up")
     Theme.StyleButton(BtnStepUp)
     BtnStepUp.OnEvent("Click", OnDesktopStepUp)
-    BtnStepDown := AppGui.Add("Button", "x188 y384 w86 h26", "Down")
+    BtnStepDown := AppGui.Add("Button", "x138 y384 w52 h26", "Down")
     Theme.StyleButton(BtnStepDown)
     BtnStepDown.OnEvent("Click", OnDesktopStepDown)
+    BtnStepWait := AppGui.Add("Button", "x194 y384 w80 h26", "Wait")
+    Theme.StyleButton(BtnStepWait)
+    BtnStepWait.OnEvent("Click", OnDesktopStepWait)
 
     t3StepsLbl := AppGui.Add("Text", "x286 y108 w430", "Steps JSON (kind: windows-uia)")
     EdDesktopJson := AppGui.Add("Edit", "x286 y128 w438 h280 Multi WantReturn VScroll", "")
@@ -549,7 +552,7 @@ BuildGui() {
     EdDesktopLog := AppGui.Add("Edit", "x24 y440 w700 h160 Multi ReadOnly VScroll", "")
     Theme.StyleEdit(EdDesktopLog)
 
-    Tab3Ctrls := [t3Banner, t3Hint, ChkStrictSpots, t3ListLbl, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown
+    Tab3Ctrls := [t3Banner, t3Hint, ChkStrictSpots, t3ListLbl, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown, BtnStepWait
         , t3StepsLbl, EdDesktopJson
         , BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskOpenDir, BtnDeskLoad, BtnDeskClear, BtnDeskProbe
         , t3InstrLbl, EdDesktopInstr, BtnDeskSend, t3LogLbl, EdDesktopLog]
@@ -760,7 +763,7 @@ OnResize(thisGui, minMax, width, height) {
     global EdRecording, EdRecordUrl, EdRecordInstr, BtnRecord, BtnSendRecording
     global BtnSaveAsTest, BtnRunSavedTest, LblRecording
     global BtnReloadLatest, BtnCopyRec, BtnOpenRec, BtnCancelRecord
-    global EdDesktopJson, EdDesktopLog, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown
+    global EdDesktopJson, EdDesktopLog, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown, BtnStepWait
     if minMax = -1 {
         ; Minimize → tray (same as Close)
         HideToTray()
@@ -798,9 +801,10 @@ OnResize(thisGui, minMax, width, height) {
             if jsonW < 280
                 jsonW := Max(contentW - 480, 200)
             try LbDesktopSteps.Move(24, 128, 250, Max(height - 470, 180))
-            try BtnStepDel.Move(24, Max(height - 336, 384), 78, 26)
-            try BtnStepUp.Move(106, Max(height - 336, 384), 78, 26)
-            try BtnStepDown.Move(188, Max(height - 336, 384), 86, 26)
+            try BtnStepDel.Move(24, Max(height - 336, 384), 58, 26)
+            try BtnStepUp.Move(86, Max(height - 336, 384), 48, 26)
+            try BtnStepDown.Move(138, Max(height - 336, 384), 52, 26)
+            try BtnStepWait.Move(194, Max(height - 336, 384), 80, 26)
             try EdDesktopJson.Move(286, 128, jsonW, Max(height - 420, 180))
             try EdDesktopLog.Move(24, , Min(contentW - 220, 700), )
         }
@@ -2044,6 +2048,36 @@ OnDesktopStepDown(*) {
     try LbDesktopSteps.Choose(sel + 1)
     SaveIniAll()
     SetStatus("Moved step #" sel " down", "ok")
+}
+
+OnDesktopStepWait(*) {
+    global Desktop, EdDesktopJson, LbDesktopSteps
+    if Desktop.recording {
+        SetStatus("Stop recording before inserting wait", "err")
+        return
+    }
+    SyncDesktopFromJsonOrList()
+    sel := 0
+    try sel := Integer(LbDesktopSteps.Value)
+    ms := DesktopRecord.DefaultWaitMs
+    try {
+        ib := InputBox("Wait duration in milliseconds (0–60000). Inserts after the selected step, or appends if none selected.", "Insert wait step", "w420 h160", String(ms))
+        if ib.Result = "Cancel"
+            return
+        ms := Integer(Trim(ib.Value))
+    } catch {
+        ; keep default
+    }
+    newIdx := Desktop.InsertWait(ms, sel)
+    if newIdx < 1 {
+        SetStatus("Wait insert failed", "err")
+        return
+    }
+    EdDesktopJson.Value := Desktop.ToJson()
+    RefreshDesktopStepList()
+    try LbDesktopSteps.Choose(newIdx)
+    SaveIniAll()
+    SetStatus("Inserted wait " ms "ms as step #" newIdx, "ok")
 }
 
 SetStatus(msg, tone := "") {

@@ -19,6 +19,8 @@ class DesktopRecord {
     static WheelDeltaPerNotch := 120    ; Win32 WHEEL_DELTA convention
     static DragThresholdPx := 10        ; LButton move before click→drag
     static KeyRepeatDebounceMs := 200   ; coalesce identical key auto-repeats while recording
+    static DefaultWaitMs := 1000        ; Tab3 Wait button / action:"wait" default
+    static MaxWaitMs := 60000
 
     steps := []          ; array of Maps
     recording := false
@@ -1107,6 +1109,10 @@ class DesktopRecord {
             k := step.Has("keys") ? String(step["keys"]) : ""
             return "key " k
         }
+        if action = "wait" {
+            ms := step.Has("ms") ? Integer(step["ms"]) : DesktopRecord.DefaultWaitMs
+            return "wait " ms "ms"
+        }
         return "click " target
     }
 
@@ -1132,6 +1138,23 @@ class DesktopRecord {
         this.steps[index] := this.steps[dest]
         this.steps[dest] := tmp
         return true
+    }
+
+    ; Insert action:"wait" after afterIndex (1-based), or append when afterIndex < 1 / past end.
+    ; Returns new 1-based index, or 0 on failure. ms clamped 0–MaxWaitMs.
+    InsertWait(ms := 1000, afterIndex := 0) {
+        ms := Integer(ms)
+        if ms < 0
+            ms := 0
+        if ms > DesktopRecord.MaxWaitMs
+            ms := DesktopRecord.MaxWaitMs
+        step := Map("action", "wait", "ms", ms)
+        if afterIndex >= 1 && afterIndex <= this.steps.Length {
+            this.steps.InsertAt(afterIndex + 1, step)
+            return afterIndex + 1
+        }
+        this.steps.Push(step)
+        return this.steps.Length
     }
 
     ; Play all steps. Returns {ok, failedAt, message, log}
@@ -1199,6 +1222,20 @@ class DesktopRecord {
     RunStep(step, verifyOnly := false) {
         if !(step is Map)
             return { ok: false, message: "bad step" }
+
+        ; Wait: timing only — no window gate, no Strict spots, still advances ListBox via Play()
+        action0 := step.Has("action") ? step["action"] : "click"
+        if action0 = "wait" {
+            ms := step.Has("ms") ? Integer(step["ms"]) : DesktopRecord.DefaultWaitMs
+            if ms < 0
+                ms := 0
+            if ms > DesktopRecord.MaxWaitMs
+                ms := DesktopRecord.MaxWaitMs
+            Sleep(ms)
+            verb := verifyOnly ? "VERIFY" : "PLAY"
+            return { ok: true, message: verb " wait " ms "ms" }
+        }
+
         winMap := step.Has("window") ? step["window"] : Map()
         targets := step.Has("targets") ? step["targets"] : []
         timeoutMs := step.Has("timeoutMs") ? Integer(step["timeoutMs"]) : 4000
