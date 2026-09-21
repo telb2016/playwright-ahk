@@ -402,13 +402,47 @@ class DesktopRecord {
         } else if !UiaCore.InvokeClick(resolved.el) {
             return { ok: false, message: "FAIL invoke/click via " used }
         }
-        ; Brief settle + re-check element still addressable (property wait)
-        Sleep(80)
+        settle := step.Has("settleMs") ? Integer(step["settleMs"]) : 80
+        if settle < 0
+            settle := 0
+        Sleep(settle)
+        ; Re-check element still addressable (property wait)
         check := UiaCore.ResolveFromTargets(hwnd, hard, 800)
         if IsObject(check) && IsObject(check.el)
             return { ok: true, message: "PLAY ok via " used " (post-check)" }
         ; Post-check miss is warning-ish but action already invoked — treat OK if invoke succeeded
         return { ok: true, message: "PLAY ok via " used " (post-check soft miss)" }
+    }
+
+    ; Load newest desktop-*.json from recordings/windows (by file time).
+    LoadLatest(repoRoot := "") {
+        root := repoRoot != "" ? repoRoot : this.repoRoot
+        dir := DesktopRecord.Dir(root)
+        if !DirExist(dir)
+            return ""
+        best := ""
+        bestT := 0
+        loop files dir "\desktop-*.json" {
+            try {
+                t := FileGetTime(A_LoopFileFullPath, "M")
+                ; YYYYMMDDHHMISS lexical works
+                if t > bestT {
+                    bestT := t
+                    best := A_LoopFileFullPath
+                }
+            }
+        }
+        if best = ""
+            return ""
+        try raw := FileRead(best, "UTF-8")
+        catch {
+            return ""
+        }
+        if !this.LoadJson(raw)
+            return ""
+        this.lastPath := best
+        this._Status("Loaded latest " best, "ok")
+        return best
     }
 
     Save(repoRoot := "") {

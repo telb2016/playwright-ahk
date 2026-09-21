@@ -358,6 +358,11 @@ class UiaCore {
         wantClass := winMap.Has("Class") ? winMap["Class"] : ""
         wantProc := winMap.Has("ProcessName") ? StrLower(winMap["ProcessName"]) : ""
         wantTitle := winMap.Has("Title") ? winMap["Title"] : ""
+        ; Need at least one hard key — otherwise refuse (avoid clicking random windows)
+        if wantClass = "" && wantProc = "" {
+            UiaCore.LastError := "window descriptor missing Class and ProcessName"
+            return 0
+        }
         deadline := A_TickCount + timeoutMs
         while A_TickCount <= deadline {
             ; Prefer class + process hard match

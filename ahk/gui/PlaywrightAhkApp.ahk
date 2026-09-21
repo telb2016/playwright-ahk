@@ -115,6 +115,7 @@ SetupTray() {
     A_TrayMenu.Add()
     A_TrayMenu.Add("Open recordings folder", (*) => (ShowAndFocus(), OnOpenRecordingsFolder()))
     A_TrayMenu.Add("Edit latest.spec.js", (*) => OnEditLatestSpec())
+    A_TrayMenu.Add("Load latest desktop UIA JSON", (*) => (ShowAndFocus(), RequestTab(3), OnDesktopLoadLatest()))
     A_TrayMenu.Add("Open repo folder", (*) => (ShowAndFocus(), OnOpenRepoFolder()))
     A_TrayMenu.Add("&Hotkeys / help", OnTrayHelp)
     A_TrayMenu.Add()
@@ -259,7 +260,7 @@ BuildGui() {
     global Catalog, Tab1Ctrls, Tab2Ctrls, Tab3Ctrls, ChipBtns, EdChipFilter, LblNoChipMatch
     global BtnTab1, BtnTab2, BtnTab3, WipeGui, WipeLbl
     global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr
-    global BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskOpenDir, BtnDeskSend, BtnDeskClear, BtnDeskProbe
+    global BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskOpenDir, BtnDeskLoad, BtnDeskSend, BtnDeskClear, BtnDeskProbe
 
     AppGui := Gui("+Resize +MinSize1000x640", "Playwright AHK — Overnight GUI")
     Theme.StyleGui(AppGui)
@@ -502,18 +503,21 @@ BuildGui() {
     BtnDeskOpenDir := AppGui.Add("Button", "x" (bx + 104) " y248 w96 h28", "Folder")
     Theme.StyleButton(BtnDeskOpenDir)
     BtnDeskOpenDir.OnEvent("Click", OnDesktopOpenFolder)
-    BtnDeskClear := AppGui.Add("Button", "x" bx " y286 w96 h28", "Clear")
+    BtnDeskLoad := AppGui.Add("Button", "x" bx " y286 w96 h28", "Load latest")
+    Theme.StyleButton(BtnDeskLoad)
+    BtnDeskLoad.OnEvent("Click", OnDesktopLoadLatest)
+    BtnDeskClear := AppGui.Add("Button", "x" (bx + 104) " y286 w96 h28", "Clear")
     Theme.StyleButton(BtnDeskClear)
     BtnDeskClear.OnEvent("Click", OnDesktopClear)
-    BtnDeskProbe := AppGui.Add("Button", "x" (bx + 104) " y286 w96 h28", "Probe")
+    BtnDeskProbe := AppGui.Add("Button", "x" bx " y320 w200 h26", "Probe under cursor")
     Theme.StyleButton(BtnDeskProbe)
     BtnDeskProbe.OnEvent("Click", OnDesktopProbe)
 
-    t3InstrLbl := AppGui.Add("Text", "x" bx " y324 w200", "Copilot instruction")
-    EdDesktopInstr := AppGui.Add("Edit", "x" bx " y344 w200 h60 Multi WantReturn VScroll",
+    t3InstrLbl := AppGui.Add("Text", "x" bx " y352 w200", "Copilot instruction")
+    EdDesktopInstr := AppGui.Add("Edit", "x" bx " y372 w200 h50 Multi WantReturn VScroll",
         "Refactor these UIA steps for stability; keep AutomationId-first targeting.")
     Theme.StyleEdit(EdDesktopInstr)
-    BtnDeskSend := AppGui.Add("Button", "x" bx " y414 w200 h36", "Send desktop → Copilot")
+    BtnDeskSend := AppGui.Add("Button", "x" bx " y430 w200 h36", "Send desktop → Copilot")
     Theme.StyleButton(BtnDeskSend, true)
     BtnDeskSend.OnEvent("Click", OnDesktopSendToCopilot)
 
@@ -522,7 +526,7 @@ BuildGui() {
     Theme.StyleEdit(EdDesktopLog)
 
     Tab3Ctrls := [t3Banner, t3Hint, t3StepsLbl, EdDesktopJson
-        , BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskOpenDir, BtnDeskClear, BtnDeskProbe
+        , BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskOpenDir, BtnDeskLoad, BtnDeskClear, BtnDeskProbe
         , t3InstrLbl, EdDesktopInstr, BtnDeskSend, t3LogLbl, EdDesktopLog]
 
     StatusBar := AppGui.Add("Text", "x10 y675 w960 h24 +0x100", " Ready")  ; SS_NOTIFY for click
@@ -1709,7 +1713,20 @@ OnDesktopOpenFolder(*) {
     dir := DesktopRecord.Dir(RepoRoot)
     DesktopRecord.EnsureDirs(RepoRoot)
     Run('explorer.exe "' dir '"')
-    SetStatus("Opened recordings\\windows")
+    SetStatus("Opened recordings\windows")
+}
+
+OnDesktopLoadLatest(*) {
+    global Desktop, EdDesktopJson, RepoRoot, ActiveTab
+    if ActiveTab != 3
+        RequestTab(3)
+    path := Desktop.LoadLatest(RepoRoot)
+    if path = "" {
+        SetStatus("No desktop-*.json in recordings\windows", "err")
+        return
+    }
+    EdDesktopJson.Value := Desktop.ToJson()
+    SetStatus("Loaded " path, "ok")
 }
 
 OnDesktopProbe(*) {
