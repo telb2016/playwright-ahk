@@ -80,6 +80,7 @@ ChipDrag.SetOwner(AppGui.Hwnd)
 
 Desktop.onStatus := DesktopStatusCb
 Desktop.onStep := OnDesktopStepCaptured
+Desktop.onPlayIndex := OnDesktopPlayIndex
 try Desktop.ignoreHwnd := AppGui.Hwnd
 SlotEditor.SetIniPath(IniPath)
 LoadIniAll()
@@ -479,7 +480,7 @@ BuildGui() {
         "WINDOWS DESKTOP UIA RECORDER — AutoHotkey + UI Automation only. Never Playwright / npx / @playwright/test.")
     try t3Banner.SetFont("s10 Bold c" Theme.Err, "Segoe UI")
     t3Hint := AppGui.Add("Text", "x24 y78 w700 c" Theme.FgDim,
-        "UIA ranked targets identify the control. Strict spots = client-area % checksums (not taskbar). Display profile hard-fails on DPI/resolution/monitor change.")
+        "UIA ranked targets · click/dblclick/wheel/type. Strict spots = client-% checksums. Play highlights the current ListBox step.")
 
     ChkStrictSpots := AppGui.Add("CheckBox", "x740 y76 w200 c" Theme.Fg, "Strict fullscreen spots")
     try ChkStrictSpots.Value := 1
@@ -1714,6 +1715,30 @@ OnDesktopStepCaptured(step) {
     RefreshDesktopStepList()
 }
 
+; Select step index in Tab3 ListBox during Play/Verify (and leave fail selected).
+OnDesktopPlayIndex(index) {
+    global LbDesktopSteps, Desktop
+    if !IsObject(LbDesktopSteps)
+        return
+    try {
+        idx := Integer(index)
+        if idx >= 1 && idx <= Desktop.steps.Length
+            LbDesktopSteps.Choose(idx)
+    }
+}
+
+HighlightDesktopStep(failedAt, ok := true) {
+    global LbDesktopSteps, Desktop
+    if !IsObject(LbDesktopSteps)
+        return
+    try {
+        if !ok && Integer(failedAt) >= 1
+            LbDesktopSteps.Choose(Integer(failedAt))
+        else if ok && Desktop.steps.Length
+            LbDesktopSteps.Choose(Desktop.steps.Length)
+    }
+}
+
 OnDesktopRecord(*) {
     global Desktop, ActiveTab, BtnDeskRecord, BtnDeskStop, BusyDesktop, WipeActive, BusyRecord, BusyPuzzle, ChkStrictSpots
     if WipeActive
@@ -1780,6 +1805,7 @@ OnDesktopPlay(*) {
     res := Desktop.Play(false)
     EdDesktopLog.Value := res.log
     ScrollEditToEnd(EdDesktopLog)
+    HighlightDesktopStep(res.HasProp("failedAt") ? res.failedAt : 0, res.ok)
 }
 
 OnDesktopVerify(*) {
@@ -1798,6 +1824,7 @@ OnDesktopVerify(*) {
     res := Desktop.Verify()
     EdDesktopLog.Value := res.log
     ScrollEditToEnd(EdDesktopLog)
+    HighlightDesktopStep(res.HasProp("failedAt") ? res.failedAt : 0, res.ok)
 }
 
 OnDesktopSave(*) {
