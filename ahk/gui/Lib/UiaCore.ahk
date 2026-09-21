@@ -649,6 +649,63 @@ class UiaCore {
         return false
     }
 
+    ; Screen click-point for an element (clickable point, else bounds center).
+    static ElementClickPoint(el) {
+        if !IsObject(el)
+            return ""
+        try {
+            cp := UiaCore.Prop(el, UiaCore.P_ClickablePoint)
+            if IsObject(cp)
+                return { x: Integer(cp[1]), y: Integer(cp[2]) }
+        }
+        try {
+            rect := UiaCore.Prop(el, UiaCore.P_BoundingRectangle)
+            if rect is Array || (IsObject(rect) && rect.HasProp("Length") && rect.Length = 4) {
+                x := Round((rect[1] + rect[3]) / 2)
+                y := Round((rect[2] + rect[4]) / 2)
+                return { x: Integer(x), y: Integer(y) }
+            }
+        }
+        return ""
+    }
+
+    ; LButton drag between two elements (Down at start → move → Up at end).
+    static InvokeDrag(elStart, elEnd) {
+        p1 := UiaCore.ElementClickPoint(elStart)
+        p2 := UiaCore.ElementClickPoint(elEnd)
+        if !(IsObject(p1) && IsObject(p2))
+            return false
+        return UiaCore.DragScreen(p1.x, p1.y, p2.x, p2.y)
+    }
+
+    ; Absolute screen-coordinate drag (CoordMode Screen for the gesture).
+    static DragScreen(x1, y1, x2, y2) {
+        try {
+            CoordMode("Mouse", "Screen")
+            MouseClickDrag("Left", Integer(x1), Integer(y1), Integer(x2), Integer(y2), 10)
+            Sleep(30)
+            return true
+        }
+        return false
+    }
+
+    ; Window-relative soft drag (last resort).
+    static SoftDragRelative(hwnd, relX1, relY1, relX2, relY2) {
+        if !hwnd
+            return false
+        try {
+            WinGetPos(&wx, &wy, &ww, &wh, "ahk_id " hwnd)
+            if ww <= 0 || wh <= 0
+                return false
+            x1 := wx + Round(Float(relX1) * ww)
+            y1 := wy + Round(Float(relY1) * wh)
+            x2 := wx + Round(Float(relX2) * ww)
+            y2 := wy + Round(Float(relY2) * wh)
+            return UiaCore.DragScreen(x1, y1, x2, y2)
+        }
+        return false
+    }
+
     static SoftClickRelative(hwnd, relX, relY, right := false, clickCount := 1) {
         if !hwnd
             return false
