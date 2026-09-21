@@ -259,10 +259,13 @@ BuildGui() {
 
     termTop := by + 186
     t2TermLbl := AppGui.Add("Text", "x24 y" termTop " w300", "Terminal mirror (live · persisted)")
-    BtnCopyTerm := AppGui.Add("Button", "x640 y" (termTop - 2) " w140 h26", "Copy terminal")
+    BtnCopyTerm := AppGui.Add("Button", "x520 y" (termTop - 2) " w110 h26", "Copy term")
     Theme.StyleButton(BtnCopyTerm)
     BtnCopyTerm.OnEvent("Click", OnCopyTerminal)
-    BtnOpenRepo := AppGui.Add("Button", "x790 y" (termTop - 2) " w150 h26", "Open repo folder")
+    BtnClearTerm := AppGui.Add("Button", "x638 y" (termTop - 2) " w110 h26", "Clear term")
+    Theme.StyleButton(BtnClearTerm)
+    BtnClearTerm.OnEvent("Click", OnClearTerminal)
+    BtnOpenRepo := AppGui.Add("Button", "x756 y" (termTop - 2) " w184 h26", "Open repo folder")
     Theme.StyleButton(BtnOpenRepo)
     BtnOpenRepo.OnEvent("Click", OnOpenRepoFolder)
     EdTerminal := AppGui.Add("Edit", "x24 y" (termTop + 22) " w920 h160 Multi ReadOnly VScroll", "")
@@ -294,6 +297,8 @@ BuildGui() {
     Hotkey("Delete", OnPuzzleBackspace)
     Hotkey("Esc", OnEscDragOrFocus)
     Hotkey("^s", OnSaveAllHotkey)
+    Hotkey("^+c", OnPuzzleCopy)
+    Hotkey("^+t", OnCopyTerminal)
     HotIf()
 
     ; Autosave prompt/canvas/terminal every 60s while running
@@ -645,14 +650,17 @@ OnPuzzleBackspace(*) {
     global Canvas, ActiveTab, EdCanvas
     if ActiveTab != 2
         return
+    ; Keep rows aligned with edit text (user may have typed)
+    lines := Canvas.LinesFromText(EdCanvas.Value)
+    if Canvas.Count() != lines.Length
+        Canvas.RebuildFromText(EdCanvas.Value)
     if Canvas.Backspace() {
         RefreshCanvasEdit()
     } else {
-        ; Rows empty (e.g. restored from ini) — trim last line of edit text
         EdCanvas.Value := Canvas.BackspaceText(EdCanvas.Value)
     }
     SaveIniAll()
-    SetStatus("Removed last piece")
+    SetStatus("Removed last piece / line")
 }
 
 OnPuzzleCopy(*) {
@@ -807,8 +815,8 @@ LoadIniAll() {
         c := IniRead(IniPath, "Puzzle", "Canvas", "")
         c := IniUnescape(c)
         if Trim(c) != "" {
-            Canvas.Clear()
             EdCanvas.Value := c
+            Canvas.RebuildFromText(c)
         }
     }
     try {
@@ -891,6 +899,13 @@ OnCopyTerminal(*) {
     global EdTerminal
     A_Clipboard := EdTerminal.Value
     SetStatus("Terminal output copied to clipboard")
+}
+
+OnClearTerminal(*) {
+    global EdTerminal
+    EdTerminal.Value := ""
+    SaveIniAll()
+    SetStatus("Terminal cleared")
 }
 
 OnOpenRepoFolder(*) {

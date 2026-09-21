@@ -223,6 +223,14 @@ class PuzzleCanvas {
         return lines
     }
 
+    ; After ini restore / manual edits: synthesize rows so Backspace pops lines.
+    RebuildFromText(text) {
+        this.Clear()
+        for line in this.LinesFromText(text) {
+            this.rows.Push({ label: "(edit)", argv: [line], cmdLine: line })
+        }
+    }
+
     HasEmptySlotsInText(text) {
         ; Heuristic: trailing = with nothing after (--grep=) or dangling required placeholders
         for line in this.LinesFromText(text) {

@@ -69,9 +69,9 @@ Do **not** run GUI shells from `ahk\gui\` alone — working directory is always 
 - **Run** executes from **repo root**; multi-line stops on first nonzero exit.
 - **Cancel run** aborts the in-flight puzzle job.
 - Empty canvas / incomplete slots (e.g. `--grep=` with no value) **block Run**.
-- Helpers: Clear · Default · Backspace · Copy command · Save · Copy terminal · Open repo folder.
+- Helpers: Clear · Default · Backspace · Copy command · Save · Copy/Clear terminal · Open repo folder.
 - Piece **Filter** box hides non-matching chips.
-- `F5` Run · `Delete` Backspace · `Ctrl+S` save all · autosave every 60s.
+- `F5` Run · `Delete` Backspace · `Ctrl+S` save · `Ctrl+Shift+C` copy cmd · `Ctrl+Shift+T` copy terminal · autosave 60s.
 
 Default first drop: piece flagged `defaultFirstDrop` → `test --project=chromium` (skipped when a saved canvas is restored from ini).
 
