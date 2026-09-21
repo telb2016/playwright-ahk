@@ -35,7 +35,7 @@ global AppVisible, HidingToTray
 global ChipBtns, EdChipFilter, LblNoChipMatch
 global JobStartCopilot, JobStartPuzzle
 
-global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr, ChkStrictSpots
+global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr, ChkStrictSpots, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown
 global BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskSend, BtnDeskClear
 global BusyDesktop
 
@@ -80,6 +80,7 @@ ChipDrag.SetOwner(AppGui.Hwnd)
 
 Desktop.onStatus := DesktopStatusCb
 Desktop.onStep := OnDesktopStepCaptured
+try Desktop.ignoreHwnd := AppGui.Hwnd
 SlotEditor.SetIniPath(IniPath)
 LoadIniAll()
 if Trim(EdCanvas.Value) = "" {
@@ -259,7 +260,7 @@ BuildGui() {
     global EdCanvas, EdTerminal, BtnRun, BtnCancelPuzzle
     global Catalog, Tab1Ctrls, Tab2Ctrls, Tab3Ctrls, ChipBtns, EdChipFilter, LblNoChipMatch
     global BtnTab1, BtnTab2, BtnTab3, WipeGui, WipeLbl
-    global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr
+    global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown
     global BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskOpenDir, BtnDeskLoad, BtnDeskSend, BtnDeskClear, BtnDeskProbe
 
     AppGui := Gui("+Resize +MinSize1000x640", "Playwright AHK — Overnight GUI")
@@ -484,8 +485,24 @@ BuildGui() {
     try ChkStrictSpots.SetFont("s9 c" Theme.Fg, "Segoe UI")
     ChkStrictSpots.OnEvent("Click", OnStrictSpotsToggle)
 
-    t3StepsLbl := AppGui.Add("Text", "x24 y108 w500", "Steps JSON (kind: windows-uia)")
-    EdDesktopJson := AppGui.Add("Edit", "x24 y128 w700 h280 Multi WantReturn VScroll", "")
+    t3ListLbl := AppGui.Add("Text", "x24 y108 w250", "Steps (index · action · target)")
+    LbDesktopSteps := AppGui.Add("ListBox", "x24 y128 w250 h250")
+    try LbDesktopSteps.Opt("Background" Theme.BgInput " c" Theme.Fg)
+    try LbDesktopSteps.SetFont("s9 c" Theme.Fg, "Consolas")
+    LbDesktopSteps.OnEvent("DoubleClick", OnDesktopStepDelete)
+
+    BtnStepDel := AppGui.Add("Button", "x24 y384 w78 h26", "Delete")
+    Theme.StyleButton(BtnStepDel)
+    BtnStepDel.OnEvent("Click", OnDesktopStepDelete)
+    BtnStepUp := AppGui.Add("Button", "x106 y384 w78 h26", "Up")
+    Theme.StyleButton(BtnStepUp)
+    BtnStepUp.OnEvent("Click", OnDesktopStepUp)
+    BtnStepDown := AppGui.Add("Button", "x188 y384 w86 h26", "Down")
+    Theme.StyleButton(BtnStepDown)
+    BtnStepDown.OnEvent("Click", OnDesktopStepDown)
+
+    t3StepsLbl := AppGui.Add("Text", "x286 y108 w430", "Steps JSON (kind: windows-uia)")
+    EdDesktopJson := AppGui.Add("Edit", "x286 y128 w438 h280 Multi WantReturn VScroll", "")
     Theme.StyleEdit(EdDesktopJson)
 
     bx := 740
@@ -511,7 +528,7 @@ BuildGui() {
     BtnDeskLoad := AppGui.Add("Button", "x" bx " y286 w96 h28", "Load latest")
     Theme.StyleButton(BtnDeskLoad)
     BtnDeskLoad.OnEvent("Click", OnDesktopLoadLatest)
-    BtnDeskClear := AppGui.Add("Button", "x" (bx + 104) " y286 w96 h28", "Clear")
+    BtnDeskClear := AppGui.Add("Button", "x" (bx + 104) " y286 w96 h28", "Clear all")
     Theme.StyleButton(BtnDeskClear)
     BtnDeskClear.OnEvent("Click", OnDesktopClear)
     BtnDeskProbe := AppGui.Add("Button", "x" bx " y320 w200 h26", "Probe under cursor")
@@ -530,7 +547,8 @@ BuildGui() {
     EdDesktopLog := AppGui.Add("Edit", "x24 y440 w700 h160 Multi ReadOnly VScroll", "")
     Theme.StyleEdit(EdDesktopLog)
 
-    Tab3Ctrls := [t3Banner, t3Hint, ChkStrictSpots, t3StepsLbl, EdDesktopJson
+    Tab3Ctrls := [t3Banner, t3Hint, ChkStrictSpots, t3ListLbl, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown
+        , t3StepsLbl, EdDesktopJson
         , BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskOpenDir, BtnDeskLoad, BtnDeskClear, BtnDeskProbe
         , t3InstrLbl, EdDesktopInstr, BtnDeskSend, t3LogLbl, EdDesktopLog]
 
@@ -700,6 +718,7 @@ EnsureDesktopJsonTemplate() {
     ; Empty starter so kind boundary is obvious in the editor
     EdDesktopJson.Value := '{ "version": 1, "kind": "windows-uia", "steps": [] }'
     try Desktop.LoadJson(EdDesktopJson.Value)
+    RefreshDesktopStepList()
 }
 
 ApplyChrome(w, h) {
@@ -733,7 +752,7 @@ OnResize(thisGui, minMax, width, height) {
     global EdRecording, EdRecordUrl, EdRecordInstr, BtnRecord, BtnSendRecording
     global BtnSaveAsTest, BtnRunSavedTest, LblRecording
     global BtnReloadLatest, BtnCopyRec, BtnOpenRec, BtnCancelRecord
-    global EdDesktopJson, EdDesktopLog
+    global EdDesktopJson, EdDesktopLog, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown
     if minMax = -1 {
         ; Minimize → tray (same as Close)
         HideToTray()
@@ -767,7 +786,14 @@ OnResize(thisGui, minMax, width, height) {
             try BtnOpenRec.Move(rightX + 2 * rightW // 3, instrY + 160, rightW // 3, 26)
             EdCanvas.Move(24, , Min(contentW - 220, 700), )
             EdTerminal.Move(24, , contentW, )
-            try EdDesktopJson.Move(24, 128, Min(contentW - 220, 700), Max(height - 420, 180))
+            jsonW := Min(contentW - 220 - 262, 438)
+            if jsonW < 280
+                jsonW := Max(contentW - 480, 200)
+            try LbDesktopSteps.Move(24, 128, 250, Max(height - 470, 180))
+            try BtnStepDel.Move(24, Max(height - 336, 384), 78, 26)
+            try BtnStepUp.Move(106, Max(height - 336, 384), 78, 26)
+            try BtnStepDown.Move(188, Max(height - 336, 384), 86, 26)
+            try EdDesktopJson.Move(286, 128, jsonW, Max(height - 420, 180))
             try EdDesktopLog.Move(24, , Min(contentW - 220, 700), )
         }
         ApplyChrome(width, height)
@@ -1259,6 +1285,23 @@ LoadIniAll() {
             try BtnRunSavedTest.Enabled := true
         }
     }
+    try {
+        global EdDesktopInstr, EdDesktopJson, ChkStrictSpots, Desktop
+        di := IniRead(IniPath, "Desktop", "Instruction", "")
+        di := IniUnescape(di)
+        if di != ""
+            EdDesktopInstr.Value := di
+        ss := IniRead(IniPath, "Desktop", "StrictSpots", "1")
+        try ChkStrictSpots.Value := (ss = "0") ? 0 : 1
+        try Desktop.strictSpots := !!ChkStrictSpots.Value
+        sj := IniRead(IniPath, "Desktop", "StepsJson", "")
+        sj := IniUnescape(sj)
+        if Trim(sj) != "" {
+            EdDesktopJson.Value := sj
+            try Desktop.LoadJson(sj)
+            RefreshDesktopStepList()
+        }
+    }
 }
 
 SaveIniAll() {
@@ -1295,6 +1338,15 @@ SaveIniAll() {
                 IniWrite(wx, IniPath, "UI", "X")
                 IniWrite(wy, IniPath, "UI", "Y")
             }
+        }
+        try {
+            global EdDesktopInstr, EdDesktopJson, ChkStrictSpots
+            IniWrite(IniEscape(EdDesktopInstr.Value), IniPath, "Desktop", "Instruction")
+            IniWrite(ChkStrictSpots.Value ? "1" : "0", IniPath, "Desktop", "StrictSpots")
+            sj := EdDesktopJson.Value
+            if StrLen(sj) > 48000
+                sj := SubStr(sj, 1, 48000)
+            IniWrite(IniEscape(sj), IniPath, "Desktop", "StepsJson")
         }
     }
 }
@@ -1657,6 +1709,7 @@ DesktopStatusCb(msg, tone := "") {
 OnDesktopStepCaptured(step) {
     global Desktop, EdDesktopJson
     try EdDesktopJson.Value := Desktop.ToJson()
+    RefreshDesktopStepList()
 }
 
 OnDesktopRecord(*) {
@@ -1685,6 +1738,7 @@ OnDesktopStop(*) {
     try BtnDeskRecord.Enabled := true
     try BtnDeskStop.Enabled := false
     try EdDesktopJson.Value := Desktop.ToJson()
+    RefreshDesktopStepList()
     ; Summarize ranked strategies captured
     try {
         summary := "Recorded " Desktop.Count() " steps:`n"
@@ -1718,6 +1772,7 @@ OnDesktopPlay(*) {
     try Desktop.strictSpots := !!ChkStrictSpots.Value
     if !Desktop.LoadFromEdit(EdDesktopJson.Value)
         return
+    RefreshDesktopStepList()
     ; Keep UI toggle authoritative for this run
     try Desktop.strictSpots := !!ChkStrictSpots.Value
     res := Desktop.Play(false)
@@ -1736,6 +1791,7 @@ OnDesktopVerify(*) {
     try Desktop.strictSpots := !!ChkStrictSpots.Value
     if !Desktop.LoadFromEdit(EdDesktopJson.Value)
         return
+    RefreshDesktopStepList()
     try Desktop.strictSpots := !!ChkStrictSpots.Value
     res := Desktop.Verify()
     EdDesktopLog.Value := res.log
@@ -1770,6 +1826,7 @@ OnDesktopLoadLatest(*) {
     }
     EdDesktopJson.Value := Desktop.ToJson()
     try ChkStrictSpots.Value := Desktop.strictSpots ? 1 : 0
+    RefreshDesktopStepList()
     SetStatus("Loaded " path, "ok")
 }
 
@@ -1807,6 +1864,7 @@ OnDesktopClear(*) {
     Desktop.Clear()
     EdDesktopJson.Value := ""
     EdDesktopLog.Value := ""
+    RefreshDesktopStepList()
     SaveIniAll()
     SetStatus("Desktop steps cleared", "ok")
 }
@@ -1838,6 +1896,97 @@ OnDesktopSendToCopilot(*) {
     OnCopilotSend()
 }
 
+
+
+RefreshDesktopStepList() {
+    global Desktop, LbDesktopSteps
+    if !IsObject(LbDesktopSteps)
+        return
+    try {
+        sel := LbDesktopSteps.Value
+        LbDesktopSteps.Delete()
+        for i, step in Desktop.steps {
+            LbDesktopSteps.Add([Desktop.StepListLine(i, step)])
+        }
+        if sel != "" && sel >= 1 && sel <= Desktop.steps.Length
+            LbDesktopSteps.Choose(sel)
+        else if Desktop.steps.Length
+            LbDesktopSteps.Choose(Desktop.steps.Length)
+    }
+}
+
+SyncDesktopFromJsonOrList() {
+    global Desktop, EdDesktopJson
+    if Trim(EdDesktopJson.Value) != ""
+        Desktop.LoadFromEdit(EdDesktopJson.Value)
+}
+
+OnDesktopStepDelete(*) {
+    global Desktop, EdDesktopJson, LbDesktopSteps
+    if Desktop.recording {
+        SetStatus("Stop recording before editing steps", "err")
+        return
+    }
+    SyncDesktopFromJsonOrList()
+    sel := 0
+    try sel := Integer(LbDesktopSteps.Value)
+    if sel < 1 || sel > Desktop.steps.Length {
+        SetStatus("Select a step to delete", "err")
+        return
+    }
+    if !Desktop.DeleteStep(sel) {
+        SetStatus("Delete failed", "err")
+        return
+    }
+    EdDesktopJson.Value := Desktop.ToJson()
+    RefreshDesktopStepList()
+    SaveIniAll()
+    SetStatus("Deleted step #" sel, "ok")
+}
+
+OnDesktopStepUp(*) {
+    global Desktop, EdDesktopJson, LbDesktopSteps
+    if Desktop.recording {
+        SetStatus("Stop recording before editing steps", "err")
+        return
+    }
+    SyncDesktopFromJsonOrList()
+    sel := 0
+    try sel := Integer(LbDesktopSteps.Value)
+    if sel < 2 {
+        SetStatus("Cannot move further up", "err")
+        return
+    }
+    if !Desktop.MoveStep(sel, -1)
+        return
+    EdDesktopJson.Value := Desktop.ToJson()
+    RefreshDesktopStepList()
+    try LbDesktopSteps.Choose(sel - 1)
+    SaveIniAll()
+    SetStatus("Moved step #" sel " up", "ok")
+}
+
+OnDesktopStepDown(*) {
+    global Desktop, EdDesktopJson, LbDesktopSteps
+    if Desktop.recording {
+        SetStatus("Stop recording before editing steps", "err")
+        return
+    }
+    SyncDesktopFromJsonOrList()
+    sel := 0
+    try sel := Integer(LbDesktopSteps.Value)
+    if sel < 1 || sel >= Desktop.steps.Length {
+        SetStatus("Cannot move further down", "err")
+        return
+    }
+    if !Desktop.MoveStep(sel, 1)
+        return
+    EdDesktopJson.Value := Desktop.ToJson()
+    RefreshDesktopStepList()
+    try LbDesktopSteps.Choose(sel + 1)
+    SaveIniAll()
+    SetStatus("Moved step #" sel " down", "ok")
+}
 
 SetStatus(msg, tone := "") {
     global StatusBar
