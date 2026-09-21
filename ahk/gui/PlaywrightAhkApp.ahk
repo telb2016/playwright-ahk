@@ -1831,7 +1831,7 @@ OnDesktopLoadLatest(*) {
 }
 
 OnDesktopProbe(*) {
-    global Desktop, EdDesktopLog
+    global Desktop, EdDesktopLog, ChkStrictSpots
     desc := Desktop.ProbeUnderCursor()
     if desc = ""
         return
@@ -1851,6 +1851,18 @@ OnDesktopProbe(*) {
         }
         win := desc.Has("Window") ? desc["Window"] : Map()
         lines .= "window class=" (win.Has("Class") ? win["Class"] : "") " proc=" (win.Has("ProcessName") ? win["ProcessName"] : "") "`n"
+        ; Optional Strict spots preview (client-% only)
+        hwnd := win.Has("Hwnd") ? Integer(win["Hwnd"]) : 0
+        if hwnd && (!IsObject(ChkStrictSpots) || ChkStrictSpots.Value) {
+            pack := ScreenSpots.CapturePack(hwnd, ScreenSpots.IsProbablyFullscreen(hwnd))
+            lines .= "display " pack["display"]["screenW"] "x" pack["display"]["screenH"] " dpi=" pack["display"]["dpi"] " mons=" pack["display"]["monitors"] "`n"
+            lines .= "spots settle=" (pack.Has("settleOk") && pack["settleOk"] ? "ok" : "FAIL") " count=" pack["spots"].Length " (client-%)`n"
+            for i, s in pack["spots"] {
+                if i > 3
+                    break
+                lines .= "  #" i " (" Round(s["rx"]*100) "%," Round(s["ry"]*100) "%) rgb=" s["rgb"] "`n"
+            }
+        }
         EdDesktopLog.Value := lines
     }
 }
