@@ -1112,8 +1112,8 @@ OnSendRecordingToCopilot(*) {
     prompt := RecordSession.BuildCopilotPrompt(spec, EdRecordInstr.Value)
     EdPrompt.Value := prompt
     try BtnSaveAsTest.Enabled := false
-    if ActiveTab != 1
-        RequestTab(1)
+    ; Force Tab 1 immediately (avoid train-wipe race before Send)
+    ShowTab(1, true)
     SaveIniAll()
     SetStatus("Recording prompt loaded — sending to Copilot…")
     OnCopilotSend()
