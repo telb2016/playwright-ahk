@@ -33,7 +33,7 @@ ahk\gui\PlaywrightAhkApp.ahk
 npx --no-install playwright test --project=chromium
 ```
 
-- **Tab 3** is Windows Desktop UIA only (never Playwright) — Record clicks/typing → `recordings\windows\`.
+- **Tab 3** is Windows Desktop UIA only (never Playwright) — Record clicks/dblclick/wheel/typing → `recordings\windows\`.
 
 Optional demo hotkeys: run `ahk\InvestorDemo.ahk`  
 (`Ctrl+Alt+1` Test · `Ctrl+Alt+2` Codegen · `Ctrl+Alt+3` ShowReport · `Ctrl+Alt+0` launch overnight GUI).
@@ -94,14 +94,16 @@ Default first drop: piece flagged `defaultFirstDrop` → `test --project=chromiu
 
 Bulletproof **AutoHotkey + UI Automation** recorder for the Windows machine itself.
 
-- **Record** — clicks **and typed text** via `IUIAutomation` (`UiaCore.ahk`) + AHK v2 `InputHook` (visible; does not swallow keys). Each click/type step stores a **ranked target list**:
+- **Record** — clicks, **double-clicks**, **mouse wheel**, and typed text via `IUIAutomation` (`UiaCore.ahk`) + AHK v2 `InputHook` / `~WheelUp|Down` hotkeys. Each pointer/type step stores a **ranked target list**:
   1. `AutomationId`
   2. `Name` + `ControlType`
   3. `LocalizedControlType` + index among siblings
   Soft **window-relative** click is rank 99 last-resort only (never primary verifier).
+- **Double-click** — `action: "dblclick"`. Left-button edges are deferred for `GetDoubleClickTime()` (same position slop) so a true dblclick is **one** step, not two clicks. Playback: `UiaCore.InvokeDoubleClick` (clickable point / bounds ×2).
+- **Mouse wheel** — `action: "wheel"` with signed `notches` (+up / −down) and `delta` (= notches × 120). Rapid same-direction notches within ~**180ms** coalesce into one JSON step (keeps recordings sane). Window/target captured under cursor on the first notch of a batch. Playback: activate hard-keys → move to target when resolved → `WheelUp`/`WheelDown`.
 - **Typing** — `action: "type"` steps with a `text` field. Batched ~**500ms** after last key (idle debounce); pure modifiers ignored; **Enter** commits early (appends `\n`). Focused-element ranked targets attached when UIA can describe them. Typing while this GUI is focused is skipped.
-- **Play / Verify** — order: (1) window/process class hard gate → (2) ranked UIA targets → (3) optional **Strict fullscreen spots**. For `type`: focus + **SetValue** when possible, else `SendText`.
-- **Step list editor** — ListBox (index · action · short target); **Delete** / **Up** / **Down**; **Clear all** confirms. Stays synced with Steps JSON + ini.
+- **Play / Verify** — order: (1) window/process class hard gate → (2) ranked UIA targets → (3) optional **Strict fullscreen spots**. For `type`: focus + **SetValue** when possible, else `SendText`. ListBox **highlights the current step** as Play/Verify runs; **failing step stays selected** on hard-fail.
+- **Step list editor** — ListBox (index · action · short target, including `dblclick` / `wheelUp|Down xN`); **Delete** / **Up** / **Down**; **Clear all** confirms. Stays synced with Steps JSON + ini.
 - **Strict fullscreen spots** (Tab 3 toggle, default ON) — 9 client-area samples as **% of client W/H** (never taskbar/clock/tray). Settle wait ~200ms (spots unchanged) before hash. Playback allows ±Δ RGB + partial pass (~2/3). Snapshot **display profile** (resolution, DPI/scale, monitor count) — hard-fail early if changed. Pixel identity for *controls* remains last-resort soft only. Unchanged for type steps.
 - **Save** — `recordings/windows/desktop-*.json` (+ `.ahk` stub). Gitignored payloads; folder kept.
 - **Send desktop → Copilot** — seeds *AutoHotkey + UI Automation* — **never** `@playwright/test`. Separate from Tab 1 browser Record pane.
@@ -141,6 +143,8 @@ scripts/puzzle-pieces.json     ← Tab 2 catalog (repo root)
 ## CHANGELOG (overnight polish)
 
 ### PR #6 — `ahk/overnight-polish-2`
+- **Tab 3 — dblclick + mouse wheel** — `action:"dblclick"` via `GetDoubleClickTime` pending-click coalesce; `action:"wheel"` with notches/delta + ~180ms same-direction batch; UiaCore double-click / Wheel helpers; ListBox summaries updated.
+- **Tab 3 — Play/Verify ListBox highlight** — selects current step index while running; leaves failing step selected on hard-fail.
 - **Tab 3 — keyboard typing capture** — `InputHook` batches into `action:"type"` + `text`; ~500ms idle / Enter commit; ranked UIA from focused element; playback SetValue→SendText.
 - **Tab 3 — step list editor** — ListBox synced with JSON/ini; Delete / Up / Down / Clear all (confirm).
 - **Tab 3 — Windows Desktop UIA** — Record/Stop/Play/Verify/Save; ranked targets; hard-fail wrong process/class; Copilot seed is AHK+UIA never Playwright; saves under `recordings/windows/`.
@@ -198,7 +202,7 @@ scripts/puzzle-pieces.json     ← Tab 2 catalog (repo root)
 ## Known limitations
 
 - GUI is Windows-native AHK; not exercised on Linux CI.
-- Tab 3 requires Windows UI Automation COM (`UIAutomationCore`); clicks are edge-polled; typing uses visible `InputHook` batches (not a full low-level keyboard macro / chord recorder).
+- Tab 3 requires Windows UI Automation COM (`UIAutomationCore`); clicks are edge-polled with a `GetDoubleClickTime` pending window for dblclick; wheel uses `~WheelUp`/`~WheelDown` (batched ~180ms same-direction); typing uses visible `InputHook` batches (not a full low-level keyboard macro / chord recorder).
 - Drag-drop uses mouse capture polling (not OLE `IDropTarget`); drop target is the canvas Edit HWND; drag cancels if the app loses focus.
 - Interactive Playwright UIs (`--ui`, codegen, show-report) may need a visible console for some workflows; capture mode redirects to the terminal mirror.
 - Copilot multiline prompts go through a short PowerShell helper so quoting survives `cmd.exe`.
