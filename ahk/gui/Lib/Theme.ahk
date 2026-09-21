@@ -186,4 +186,12 @@ class Theme {
         try btn.Focus()
         WinWaitClose("ahk_id " hwnd)
     }
+
+
+    static StyleCheck(ctrl) {
+        if !IsObject(ctrl)
+            return
+        try ctrl.Opt("c" Theme.Fg)
+        try ctrl.SetFont("s9 c" Theme.Fg, "Segoe UI")
+    }
 }

@@ -484,7 +484,7 @@ BuildGui() {
 
     ChkStrictSpots := AppGui.Add("CheckBox", "x740 y76 w200 c" Theme.Fg, "Strict fullscreen spots")
     try ChkStrictSpots.Value := 1
-    try ChkStrictSpots.SetFont("s9 c" Theme.Fg, "Segoe UI")
+    Theme.StyleCheck(ChkStrictSpots)
     ChkStrictSpots.OnEvent("Click", OnStrictSpotsToggle)
 
     t3ListLbl := AppGui.Add("Text", "x24 y108 w250", "Steps (index · action · target)")
