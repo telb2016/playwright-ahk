@@ -5,5 +5,6 @@ blob-report/
 playwright/.cache/
 *.zip
 recordings/*.spec.js
+recordings/**/*.spec.js
 !recordings/.gitkeep
 !recordings/archive/.gitkeep
