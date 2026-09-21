@@ -23,6 +23,7 @@ class DesktopRecord {
     static MaxWaitMs := 60000
     static HoverDwellMs := 700          ; pointer dwell for action:"hover" (~600–800ms)
     static HoverSlopPx := 6             ; max move while dwelling / leave-slop after hover
+    static HoverClickSuppressMs := 400  ; drop just-recorded hover if click/rclick within this window
 
     steps := []          ; array of Maps
     recording := false
@@ -54,6 +55,7 @@ class DesktopRecord {
     hoverLastKey := ""            ; target key of last recorded hover
     hoverLastX := 0
     hoverLastY := 0
+    hoverCommitTick := 0          ; A_TickCount when last hover step was pushed (click-suppress)
 
     __New(repoRoot) {
         this.repoRoot := repoRoot
@@ -84,6 +86,7 @@ class DesktopRecord {
         this.hoverLastKey := ""
         this.hoverLastX := 0
         this.hoverLastY := 0
+        this.hoverCommitTick := 0
     }
 
     Count() => this.steps.Length
@@ -229,6 +232,7 @@ class DesktopRecord {
         this.hoverLastKey := ""
         this.hoverLastX := 0
         this.hoverLastY := 0
+        this.hoverCommitTick := 0
         this.dblClickMs := DesktopRecord.GetDoubleClickTimeMs()
         this.sessionDisplay := ScreenSpots.CaptureDisplayProfile()
         this.noteFullscreen := false
@@ -266,6 +270,7 @@ class DesktopRecord {
         this.hoverLastKey := ""
         this.hoverLastX := 0
         this.hoverLastY := 0
+        this.hoverCommitTick := 0
         this._Status("Recording stopped — " this.steps.Length " steps", "ok")
     }
 
@@ -802,6 +807,7 @@ class DesktopRecord {
         down := GetKeyState("LButton", "P")
         if down && !this.lastBtn {
             this._CancelHoverWatch()  ; button down cancels hover dwell
+            this._MaybeDropTrailingHover()  ; drop accidental hover-before-click
             if !this._ShouldSkipTyping() {
                 SetTimer(this._FlushTypeIdle.Bind(this), 0)
                 this._FlushTypeBatch("before-click")
@@ -821,6 +827,7 @@ class DesktopRecord {
         rdown := GetKeyState("RButton", "P")
         if rdown && !this.lastRBtn {
             this._CancelHoverWatch()  ; button down cancels hover dwell
+            this._MaybeDropTrailingHover()  ; drop accidental hover-before-rclick
             ; Right-button down edge — mirror left-click debounce (~180ms); never emit left-click
             if !this._ShouldSkipTyping() && (A_TickCount - this.lastClickTick) >= DesktopRecord.ClickDebounceMs {
                 this.lastClickTick := A_TickCount
@@ -850,6 +857,27 @@ class DesktopRecord {
 
     _CancelHoverWatch() {
         this.hoverWatch := ""
+    }
+
+    ; If a hover was just committed and L/R button goes down quickly, pop that trailing
+    ; hover — resting-then-click should not keep a spurious hover before the click/rclick/drag.
+    ; Returns true when a hover step was removed (UI refreshed via _Emit).
+    _MaybeDropTrailingHover() {
+        if this.hoverCommitTick <= 0
+            return false
+        if (A_TickCount - this.hoverCommitTick) > DesktopRecord.HoverClickSuppressMs
+            return false
+        if this.steps.Length < 1
+            return false
+        last := this.steps[this.steps.Length]
+        if !(last is Map) || !(last.Has("action") && last["action"] = "hover")
+            return false
+        this.steps.Pop()
+        this.hoverCommitTick := 0
+        ; Keep leave-target debounce so we do not immediately re-hover on the same spot
+        this._Emit(Map("action", "hover", "_suppressed", true))
+        this._Status("Dropped trailing hover (button within " DesktopRecord.HoverClickSuppressMs "ms)", "ok")
+        return true
     }
 
     ; Stable identity string for hover debounce (leave-target).
@@ -973,6 +1001,7 @@ class DesktopRecord {
         this.hoverLastKey := key
         this.hoverLastX := sx
         this.hoverLastY := sy
+        this.hoverCommitTick := A_TickCount
     }
 
     ; Left-button edge: defer commit for GetDoubleClickTime so a true dblclick is one step.
