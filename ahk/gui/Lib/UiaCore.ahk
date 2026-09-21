@@ -550,7 +550,61 @@ class UiaCore {
         return false
     }
 
+    ; Focused UIA element → same descriptor Map as ElementFromScreenPoint (or "").
+    static GetFocusedDescribe() {
+        if !UiaCore.Ensure()
+            return ""
+        try {
+            el := UiaCore.UIA.GetFocusedElement()
+        } catch as e {
+            UiaCore.LastError := "GetFocusedElement: " e.Message
+            return ""
+        }
+        if !IsObject(el)
+            return ""
+        return UiaCore.Describe(el)
+    }
+
+    static SetFocus(el) {
+        if !IsObject(el)
+            return false
+        try {
+            el.SetFocus()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    ; ValuePattern (10002) SetValue, else LegacyIAccessible Value, else false.
+    static SetValue(el, text) {
+        if !IsObject(el)
+            return false
+        text := String(text)
+        try {
+            pat := el.GetCurrentPattern(10002)  ; UIA_ValuePatternId
+            if IsObject(pat) {
+                pat.SetValue(text)
+                return true
+            }
+        }
+        try {
+            pat := el.GetCurrentPattern(10018)  ; LegacyIAccessible
+            if IsObject(pat) {
+                try pat.SetValue(text)
+                catch {
+                    try pat.Value := text
+                    catch
+                        return false
+                }
+                return true
+            }
+        }
+        return false
+    }
+
     static SoftClickRelative(hwnd, relX, relY, right := false) {
+
         if !hwnd
             return false
         try {

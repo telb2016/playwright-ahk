@@ -13,6 +13,7 @@ class DesktopRecord {
     static RelDir := "recordings\windows"
     static MinPollMs := 30
     static ClickDebounceMs := 180
+    static TypeIdleMs := 500
 
     steps := []          ; array of Maps
     recording := false
@@ -27,6 +28,10 @@ class DesktopRecord {
     strictSpots := true          ; Strict fullscreen spots (hybrid verifier) — UI toggle
     sessionDisplay := ""         ; display profile captured at record start / first step
     noteFullscreen := false      ; set when a recorded window looks fullscreen
+    typeHook := ""               ; InputHook while recording (visible; does not swallow keys)
+    typeBuf := ""                ; pending typed characters for current batch
+    typeLastTick := 0
+    ignoreHwnd := 0              ; host GUI hwnd — skip typing while our app is focused
 
     __New(repoRoot) {
         this.repoRoot := repoRoot
@@ -45,6 +50,8 @@ class DesktopRecord {
         this.lastPath := ""
         this.sessionDisplay := ""
         this.noteFullscreen := false
+        this.typeBuf := ""
+        this.typeLastTick := 0
     }
 
     Count() => this.steps.Length
@@ -178,11 +185,14 @@ class DesktopRecord {
         this.lastBtn := GetKeyState("LButton", "P")
         this.lastRBtn := GetKeyState("RButton", "P")
         this.lastClickTick := 0
+        this.typeBuf := ""
+        this.typeLastTick := 0
         this.sessionDisplay := ScreenSpots.CaptureDisplayProfile()
         this.noteFullscreen := false
+        this._StartTypeHook()
         SetTimer(this._Poll.Bind(this), DesktopRecord.MinPollMs)
         spotsNote := this.strictSpots ? " · Strict spots ON" : " · Strict spots OFF"
-        this._Status("Desktop UIA recording… click targets (Esc/Stop)" spotsNote, "ok")
+        this._Status("Desktop UIA recording… click/type targets (Esc/Stop)" spotsNote, "ok")
         return true
     }
 
@@ -191,7 +201,196 @@ class DesktopRecord {
             return
         this.recording := false
         SetTimer(this._Poll.Bind(this), 0)
+        SetTimer(this._FlushTypeIdle.Bind(this), 0)
+        this._FlushTypeBatch("stop")
+        this._StopTypeHook()
         this._Status("Recording stopped — " this.steps.Length " steps", "ok")
+    }
+
+    _StartTypeHook() {
+        this._StopTypeHook()
+        ; V = visible (do not swallow keys); L0 = no Input buffer (OnChar only)
+        ih := InputHook("V L0")
+        ih.KeyOpt("{All}", "N")  ; notify OnKeyDown for all keys
+        ih.OnChar := this._OnTypeChar.Bind(this)
+        ih.OnKeyDown := this._OnTypeKeyDown.Bind(this)
+        this.typeHook := ih
+        try ih.Start()
+        catch as e {
+            this.typeHook := ""
+            this._Status("InputHook start failed: " e.Message, "err")
+        }
+    }
+
+    _StopTypeHook() {
+        ih := this.typeHook
+        this.typeHook := ""
+        if IsObject(ih) {
+            try ih.Stop()
+        }
+    }
+
+    _OnTypeChar(ih, ch) {
+        if !this.recording
+            return
+        if this._ShouldSkipTyping()
+            return
+        if ch = "" || ch = Chr(0)
+            return
+        ; Filter pure control chars except tab / newline (Enter handled in OnKeyDown)
+        code := Ord(ch)
+        if code < 32 && ch != "`t" && ch != "`n" && ch != "`r"
+            return
+        this.typeBuf .= ch
+        this.typeLastTick := A_TickCount
+        SetTimer(this._FlushTypeIdle.Bind(this), -DesktopRecord.TypeIdleMs)
+    }
+
+    _OnTypeKeyDown(ih, vk, sc) {
+        if !this.recording
+            return
+        if this._ShouldSkipTyping()
+            return
+        ; Escape → stop (also polled); do not put into type buffer
+        if vk = 27 {  ; VK_ESCAPE
+            this.StopRecord()
+            return
+        }
+        ; Backspace within current batch
+        if vk = 8 {  ; VK_BACK
+            if this.typeBuf != "" {
+                this.typeBuf := SubStr(this.typeBuf, 1, -1)
+                this.typeLastTick := A_TickCount
+                SetTimer(this._FlushTypeIdle.Bind(this), -DesktopRecord.TypeIdleMs)
+            }
+            return
+        }
+        ; Enter commits current type batch (optional early end of debounce)
+        if vk = 13 {  ; VK_RETURN
+            ; Append newline so playback reproduces the Enter keystroke
+            if this.typeBuf = "" || SubStr(this.typeBuf, -1) != "`n"
+                this.typeBuf .= "`n"
+            SetTimer(this._FlushTypeIdle.Bind(this), 0)
+            this._FlushTypeBatch("enter")
+            return
+        }
+        ; Pure modifiers — ignore (no OnChar)
+        ; VK: Shift 16, Ctrl 17, Alt 18, LWin/RWin 91/92, Caps 20
+        if vk = 16 || vk = 17 || vk = 18 || vk = 91 || vk = 92 || vk = 20
+            return
+    }
+
+    _ShouldSkipTyping() {
+        ; Skip while our host GUI is the foreground window (edit boxes / buttons)
+        if this.ignoreHwnd {
+            try {
+                fg := WinExist("A")
+                if fg && Integer(fg) = Integer(this.ignoreHwnd)
+                    return true
+            }
+        }
+        return false
+    }
+
+    _FlushTypeIdle() {
+        if !this.recording
+            return
+        if this.typeBuf = ""
+            return
+        if (A_TickCount - this.typeLastTick) < DesktopRecord.TypeIdleMs - 20
+            return
+        this._FlushTypeBatch("idle")
+    }
+
+    _FlushTypeBatch(reason := "idle") {
+        text := this.typeBuf
+        this.typeBuf := ""
+        this.typeLastTick := 0
+        SetTimer(this._FlushTypeIdle.Bind(this), 0)
+        if text = ""
+            return
+        ; Drop batches that are only whitespace/newlines with no other content? keep single Enter
+        this._CaptureType(text, reason)
+    }
+
+    _CaptureType(text, reason := "idle") {
+        desc := UiaCore.GetFocusedDescribe()
+        sx := 0, sy := 0, hwndUnder := 0
+        if desc is Map && desc.Has("ClickX") {
+            sx := desc["ClickX"], sy := desc["ClickY"]
+        } else {
+            try MouseGetPos(&sx, &sy, &hwndUnder)
+        }
+        if desc = "" || !(desc is Map) {
+            win := Map()
+            if !hwndUnder {
+                try hwndUnder := WinExist("A")
+            }
+            if hwndUnder {
+                try {
+                    win["Hwnd"] := hwndUnder
+                    win["Title"] := WinGetTitle("ahk_id " hwndUnder)
+                    win["Class"] := WinGetClass("ahk_id " hwndUnder)
+                    win["ProcessName"] := StrLower(WinGetProcessName("ahk_id " hwndUnder))
+                    win["ProcessId"] := WinGetPID("ahk_id " hwndUnder)
+                    WinGetPos(&wx, &wy, &ww, &wh, "ahk_id " hwndUnder)
+                    win["X"] := wx, win["Y"] := wy, win["W"] := ww, win["H"] := wh
+                }
+            }
+            desc := Map(
+                "AutomationId", "",
+                "Name", "",
+                "ControlType", 0,
+                "ControlTypeName", "",
+                "LocalizedControlType", "",
+                "ClassName", "",
+                "Window", win,
+                "ParentIndex", 0,
+                "Targets", [],
+                "ClickX", sx,
+                "ClickY", sy
+            )
+            this._Status("UIA miss @ type — stored window hard-keys only", "err")
+        }
+        preview := text
+        if StrLen(preview) > 40
+            preview := SubStr(preview, 1, 37) "…"
+        preview := StrReplace(StrReplace(preview, "`n", "\\n"), "`r", "")
+        step := Map(
+            "action", "type",
+            "text", text,
+            "timeoutMs", 4000,
+            "window", desc.Has("Window") ? desc["Window"] : Map(),
+            "targets", desc.Has("Targets") ? desc["Targets"] : [],
+            "captured", Map(
+                "AutomationId", desc.Has("AutomationId") ? desc["AutomationId"] : "",
+                "Name", desc.Has("Name") ? desc["Name"] : "",
+                "ControlType", desc.Has("ControlType") ? desc["ControlType"] : 0,
+                "ControlTypeName", desc.Has("ControlTypeName") ? desc["ControlTypeName"] : "",
+                "LocalizedControlType", desc.Has("LocalizedControlType") ? desc["LocalizedControlType"] : "",
+                "ClassName", desc.Has("ClassName") ? desc["ClassName"] : "",
+                "ParentIndex", desc.Has("ParentIndex") ? desc["ParentIndex"] : 0
+            ),
+            "screen", Map("x", sx, "y", sy),
+            "typeReason", reason
+        )
+        if this.strictSpots {
+            hwndSpot := 0
+            if step["window"].Has("Hwnd")
+                hwndSpot := Integer(step["window"]["Hwnd"])
+            if !hwndSpot
+                hwndSpot := hwndUnder ? hwndUnder : (WinExist("A") || 0)
+            fs := ScreenSpots.IsProbablyFullscreen(hwndSpot)
+            if fs
+                this.noteFullscreen := true
+            pack := ScreenSpots.CapturePack(hwndSpot, fs)
+            step["spots"] := pack
+            if !IsObject(this.sessionDisplay) && pack.Has("display")
+                this.sessionDisplay := pack["display"]
+        }
+        this.steps.Push(step)
+        this._Emit(step)
+        this._Status("Recorded #" this.steps.Length ": type '" preview "'", "ok")
     }
 
     _Poll() {
@@ -203,6 +402,9 @@ class DesktopRecord {
         if down && !this.lastBtn {
             if (A_TickCount - this.lastClickTick) >= DesktopRecord.ClickDebounceMs {
                 this.lastClickTick := A_TickCount
+                ; Finish any pending type batch before the click so order is preserved
+                SetTimer(this._FlushTypeIdle.Bind(this), 0)
+                this._FlushTypeBatch("before-click")
                 this._CaptureClick("click")
             }
         }
@@ -211,11 +413,13 @@ class DesktopRecord {
         if rdown && !this.lastRBtn {
             if (A_TickCount - this.lastClickTick) >= DesktopRecord.ClickDebounceMs {
                 this.lastClickTick := A_TickCount
+                SetTimer(this._FlushTypeIdle.Bind(this), 0)
+                this._FlushTypeBatch("before-click")
                 this._CaptureClick("rightclick")
             }
         }
         this.lastRBtn := rdown
-        ; Esc stops
+        ; Esc stops (also handled in type hook)
         if GetKeyState("Escape", "P") {
             this.StopRecord()
         }
@@ -305,17 +509,55 @@ class DesktopRecord {
     StepLabel(step) {
         if !(step is Map)
             return "?"
+        action := step.Has("action") ? step["action"] : "click"
         cap := step.Has("captured") ? step["captured"] : Map()
         aid := cap.Has("AutomationId") ? Trim(cap["AutomationId"]) : ""
         name := cap.Has("Name") ? Trim(cap["Name"]) : ""
         ctn := cap.Has("ControlTypeName") ? cap["ControlTypeName"] : ""
+        target := ""
         if aid != ""
-            return "AutomationId=" aid
-        if name != ""
-            return ctn " '" name "'"
-        win := step.Has("window") ? step["window"] : Map()
-        cls := win.Has("Class") ? win["Class"] : ""
-        return "soft@" cls
+            target := "AutomationId=" aid
+        else if name != ""
+            target := ctn " '" name "'"
+        else {
+            win := step.Has("window") ? step["window"] : Map()
+            cls := win.Has("Class") ? win["Class"] : ""
+            target := "soft@" cls
+        }
+        if action = "type" {
+            t := step.Has("text") ? String(step["text"]) : ""
+            if StrLen(t) > 28
+                t := SubStr(t, 1, 25) "…"
+            t := StrReplace(StrReplace(t, "`n", "\n"), "`r", "")
+            return "type '" t "' → " target
+        }
+        if action = "rightclick"
+            return "rightclick " target
+        return "click " target
+    }
+
+    ; Short one-line summary for the Tab3 step ListBox.
+    StepListLine(index, step) {
+        return index ". " this.StepLabel(step)
+    }
+
+    DeleteStep(index) {
+        if index < 1 || index > this.steps.Length
+            return false
+        this.steps.RemoveAt(index)
+        return true
+    }
+
+    MoveStep(index, delta) {
+        dest := index + delta
+        if index < 1 || index > this.steps.Length
+            return false
+        if dest < 1 || dest > this.steps.Length
+            return false
+        tmp := this.steps[index]
+        this.steps[index] := this.steps[dest]
+        this.steps[dest] := tmp
+        return true
     }
 
     ; Play all steps. Returns {ok, failedAt, message, log}
@@ -431,16 +673,23 @@ class DesktopRecord {
         }
 
         if !IsObject(resolved) || !IsObject(resolved.el) {
+            actionEarly := step.Has("action") ? step["action"] : "click"
             ; Soft last-resort only after hard list exhausted
             if soft.Length {
                 st := soft[1]
                 if st.Has("relX") {
-                    right := (step.Has("action") && step["action"] = "rightclick")
+                    right := (actionEarly = "rightclick")
                     if verifyOnly {
                         spotRes := this._VerifyStepSpots(hwnd, step)
                         if !spotRes.ok
                             return spotRes
                         return { ok: true, message: "VERIFY soft-only (no UIA hit) " st["strategy"] (spotRes.message != "" ? " · " spotRes.message : "") }
+                    }
+                    if actionEarly = "type" {
+                        ; Soft relative: click to focus then type
+                        UiaCore.SoftClickRelative(hwnd, st["relX"], st["relY"], false)
+                        Sleep(40)
+                        return this._PlayType(hwnd, step, "", "soft-rel", hard)
                     }
                     if UiaCore.SoftClickRelative(hwnd, st["relX"], st["relY"], right) {
                         spotRes := this._VerifyStepSpots(hwnd, step)
@@ -450,6 +699,16 @@ class DesktopRecord {
                     }
                 }
                 return { ok: false, message: "FAIL soft fallback click" }
+            }
+            ; Type may proceed with window-only SendText when no UIA target matched
+            if actionEarly = "type" {
+                if verifyOnly {
+                    spotRes := this._VerifyStepSpots(hwnd, step)
+                    if !spotRes.ok
+                        return spotRes
+                    return { ok: true, message: "VERIFY type window-only (no UIA hit)" (spotRes.message != "" ? " · " spotRes.message : "") }
+                }
+                return this._PlayType(hwnd, step, "", "", hard)
             }
             return { ok: false, message: "FAIL no ranked UIA target matched (list exhausted)" }
         }
@@ -462,6 +721,9 @@ class DesktopRecord {
         }
 
         action := step.Has("action") ? step["action"] : "click"
+        if action = "type" {
+            return this._PlayType(hwnd, step, resolved, used, hard)
+        }
         if action = "rightclick" {
             ; Prefer clickable/bounds right-click (Invoke is left-default)
             if !UiaCore.InvokeRightClick(resolved.el) {
@@ -479,6 +741,49 @@ class DesktopRecord {
         baseMsg := IsObject(check) && IsObject(check.el)
             ? "PLAY ok via " used " (post-check)"
             : "PLAY ok via " used " (post-check soft miss)"
+        spotRes := this._VerifyStepSpots(hwnd, step)
+        if !spotRes.ok
+            return spotRes
+        if spotRes.message != ""
+            baseMsg .= " · " spotRes.message
+        return { ok: true, message: baseMsg }
+    }
+
+    ; Type playback: focus + SetValue when possible, else SendText. Spots unchanged.
+    _PlayType(hwnd, step, resolved, used, hard) {
+        text := step.Has("text") ? String(step["text"]) : ""
+        el := IsObject(resolved) && IsObject(resolved.el) ? resolved.el : ""
+        how := used != "" ? used : "SendText"
+        ok := false
+        if IsObject(el) {
+            UiaCore.SetFocus(el)
+            Sleep(40)
+            if UiaCore.SetValue(el, text) {
+                ok := true
+                how := used " SetValue"
+            } else {
+                ; Click to focus then SendText
+                try UiaCore.InvokeClick(el)
+                Sleep(40)
+                SendText(text)
+                ok := true
+                how := used " SendText"
+            }
+        } else {
+            ; Soft / no element — activate window and SendText
+            try WinActivate("ahk_id " hwnd)
+            Sleep(40)
+            SendText(text)
+            ok := true
+            how := "SendText (no UIA el)"
+        }
+        if !ok
+            return { ok: false, message: "FAIL type via " how }
+        settle := step.Has("settleMs") ? Integer(step["settleMs"]) : 80
+        if settle < 0
+            settle := 0
+        Sleep(settle)
+        baseMsg := "PLAY type ok via " how
         spotRes := this._VerifyStepSpots(hwnd, step)
         if !spotRes.ok
             return spotRes
