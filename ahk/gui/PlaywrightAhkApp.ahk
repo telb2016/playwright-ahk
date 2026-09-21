@@ -110,7 +110,6 @@ ToggleShowFocus(*) {
 ShowAndFocus() {
     global AppGui, AppVisible, LastWinW, LastWinH, LastWinX, LastWinY
     AppVisible := true
-ChipBtns := []
     try {
         showOpts := "w" LastWinW " h" LastWinH
         if LastWinX != "" && LastWinY != ""
@@ -399,6 +398,9 @@ ShowTab(n, updateButtons := true) {
         Theme.StyleTabBtn(BtnTab1, n = 1)
         Theme.StyleTabBtn(BtnTab2, n = 2)
     }
+    ; Re-apply chip filter after bulk Visible toggles
+    if n = 2
+        OnChipFilterChange()
 }
 
 ApplyChrome(w, h) {
@@ -859,6 +861,38 @@ SaveIniAll() {
         }
     }
 }
+
+OnChipFilterChange(*) {
+    global ChipBtns, EdChipFilter, ActiveTab
+    if ActiveTab != 2
+        return
+    q := StrLower(Trim(EdChipFilter.Value))
+    shown := 0
+    for item in ChipBtns {
+        match := (q = "") || InStr(StrLower(item.label), q)
+        try item.btn.Visible := match
+        if match
+            shown += 1
+    }
+    SetStatus(q = "" ? "Pieces filter cleared" : "Filter '" q "' — " shown " visible")
+}
+
+OnCopyTerminal(*) {
+    global EdTerminal
+    A_Clipboard := EdTerminal.Value
+    SetStatus("Terminal output copied to clipboard")
+}
+
+OnOpenRepoFolder(*) {
+    global RepoRoot
+    if !DirExist(RepoRoot) {
+        SetStatus("Repo root missing: " RepoRoot)
+        return
+    }
+    Run('explorer.exe "' RepoRoot '"')
+    SetStatus("Opened repo folder")
+}
+
 
 SetStatus(msg) {
     global StatusBar
