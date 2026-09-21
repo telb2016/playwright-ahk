@@ -36,7 +36,7 @@ global ChipBtns, EdChipFilter, LblNoChipMatch
 global JobStartCopilot, JobStartPuzzle
 
 global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr, ChkStrictSpots, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown, BtnStepDup, BtnStepWait
-global BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskSend, BtnDeskClear
+global BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskPlayFrom, BtnDeskVerifyFrom, BtnDeskSave, BtnDeskSend, BtnDeskClear
 global BusyDesktop
 
 CopilotJob := ""
@@ -263,7 +263,7 @@ BuildGui() {
     global Catalog, Tab1Ctrls, Tab2Ctrls, Tab3Ctrls, ChipBtns, EdChipFilter, LblNoChipMatch
     global BtnTab1, BtnTab2, BtnTab3, WipeGui, WipeLbl
     global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown, BtnStepDup, BtnStepWait
-    global BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskOpenDir, BtnDeskLoad, BtnDeskSend, BtnDeskClear, BtnDeskProbe
+    global BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskPlayFrom, BtnDeskVerifyFrom, BtnDeskSave, BtnDeskOpenDir, BtnDeskLoad, BtnDeskSend, BtnDeskClear, BtnDeskProbe
 
     AppGui := Gui("+Resize +MinSize1000x640", "Playwright AHK — Overnight GUI")
     Theme.StyleGui(AppGui)
@@ -527,27 +527,33 @@ BuildGui() {
     BtnDeskVerify := AppGui.Add("Button", "x" (bx + 104) " y210 w96 h28", "Verify")
     Theme.StyleButton(BtnDeskVerify)
     BtnDeskVerify.OnEvent("Click", OnDesktopVerify)
-    BtnDeskSave := AppGui.Add("Button", "x" bx " y248 w96 h28", "Save JSON")
+    BtnDeskPlayFrom := AppGui.Add("Button", "x" bx " y244 w96 h28", "From sel")
+    Theme.StyleButton(BtnDeskPlayFrom)
+    BtnDeskPlayFrom.OnEvent("Click", OnDesktopPlayFrom)
+    BtnDeskVerifyFrom := AppGui.Add("Button", "x" (bx + 104) " y244 w96 h28", "Vfy from")
+    Theme.StyleButton(BtnDeskVerifyFrom)
+    BtnDeskVerifyFrom.OnEvent("Click", OnDesktopVerifyFrom)
+    BtnDeskSave := AppGui.Add("Button", "x" bx " y282 w96 h28", "Save JSON")
     Theme.StyleButton(BtnDeskSave)
     BtnDeskSave.OnEvent("Click", OnDesktopSave)
-    BtnDeskOpenDir := AppGui.Add("Button", "x" (bx + 104) " y248 w96 h28", "Folder")
+    BtnDeskOpenDir := AppGui.Add("Button", "x" (bx + 104) " y282 w96 h28", "Folder")
     Theme.StyleButton(BtnDeskOpenDir)
     BtnDeskOpenDir.OnEvent("Click", OnDesktopOpenFolder)
-    BtnDeskLoad := AppGui.Add("Button", "x" bx " y286 w96 h28", "Load latest")
+    BtnDeskLoad := AppGui.Add("Button", "x" bx " y320 w96 h28", "Load latest")
     Theme.StyleButton(BtnDeskLoad)
     BtnDeskLoad.OnEvent("Click", OnDesktopLoadLatest)
-    BtnDeskClear := AppGui.Add("Button", "x" (bx + 104) " y286 w96 h28", "Clear all")
+    BtnDeskClear := AppGui.Add("Button", "x" (bx + 104) " y320 w96 h28", "Clear all")
     Theme.StyleButton(BtnDeskClear)
     BtnDeskClear.OnEvent("Click", OnDesktopClear)
-    BtnDeskProbe := AppGui.Add("Button", "x" bx " y320 w200 h26", "Probe under cursor")
+    BtnDeskProbe := AppGui.Add("Button", "x" bx " y354 w200 h26", "Probe under cursor")
     Theme.StyleButton(BtnDeskProbe)
     BtnDeskProbe.OnEvent("Click", OnDesktopProbe)
 
-    t3InstrLbl := AppGui.Add("Text", "x" bx " y352 w200", "Copilot instruction")
-    EdDesktopInstr := AppGui.Add("Edit", "x" bx " y372 w200 h50 Multi WantReturn VScroll",
+    t3InstrLbl := AppGui.Add("Text", "x" bx " y386 w200", "Copilot instruction")
+    EdDesktopInstr := AppGui.Add("Edit", "x" bx " y406 w200 h50 Multi WantReturn VScroll",
         "Refactor these UIA steps for stability; keep AutomationId-first targeting.")
     Theme.StyleEdit(EdDesktopInstr)
-    BtnDeskSend := AppGui.Add("Button", "x" bx " y430 w200 h36", "Send desktop → Copilot")
+    BtnDeskSend := AppGui.Add("Button", "x" bx " y464 w200 h36", "Send desktop → Copilot")
     Theme.StyleButton(BtnDeskSend, true)
     BtnDeskSend.OnEvent("Click", OnDesktopSendToCopilot)
 
@@ -557,7 +563,7 @@ BuildGui() {
 
     Tab3Ctrls := [t3Banner, t3Hint, ChkStrictSpots, t3ListLbl, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown, BtnStepDup, BtnStepWait
         , t3StepsLbl, EdDesktopJson
-        , BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskOpenDir, BtnDeskLoad, BtnDeskClear, BtnDeskProbe
+        , BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskPlayFrom, BtnDeskVerifyFrom, BtnDeskSave, BtnDeskOpenDir, BtnDeskLoad, BtnDeskClear, BtnDeskProbe
         , t3InstrLbl, EdDesktopInstr, BtnDeskSend, t3LogLbl, EdDesktopLog]
 
     StatusBar := AppGui.Add("Text", "x10 y675 w960 h24 +0x100", " Ready")  ; SS_NOTIFY for click
@@ -1835,6 +1841,44 @@ OnDesktopVerify(*) {
     RefreshDesktopStepList()
     try Desktop.strictSpots := !!ChkStrictSpots.Value
     res := Desktop.Verify()
+    EdDesktopLog.Value := res.log
+    ScrollEditToEnd(EdDesktopLog)
+    HighlightDesktopStep(res.HasProp("failedAt") ? res.failedAt : 0, res.ok)
+}
+
+; Play from selected ListBox step (1-based) through end. No selection → err / no-op.
+OnDesktopPlayFrom(*) {
+    DesktopPlayFromSelected(false)
+}
+
+; Verify from selected ListBox step through end.
+OnDesktopVerifyFrom(*) {
+    DesktopPlayFromSelected(true)
+}
+
+DesktopPlayFromSelected(verifyOnly := false) {
+    global Desktop, EdDesktopJson, EdDesktopLog, ActiveTab, BusyDesktop, ChkStrictSpots, LbDesktopSteps
+    verb := verifyOnly ? "Verify" : "Play"
+    if ActiveTab != 3
+        RequestTab(3)
+    if BusyDesktop || Desktop.recording {
+        SetStatus("Stop desktop recording before " verb, "err")
+        return
+    }
+    sel := 0
+    try sel := Integer(LbDesktopSteps.Value)
+    try Desktop.strictSpots := !!ChkStrictSpots.Value
+    if !Desktop.LoadFromEdit(EdDesktopJson.Value)
+        return
+    RefreshDesktopStepList()
+    if sel < 1 || sel > Desktop.steps.Length {
+        SetStatus("Select a step to " (verifyOnly ? "verify" : "play") " from", "err")
+        return
+    }
+    try LbDesktopSteps.Choose(sel)
+    try Desktop.strictSpots := !!ChkStrictSpots.Value
+    ; ListBox is 1-based; Play startIndex is 0-based
+    res := Desktop.Play(verifyOnly, sel - 1)
     EdDesktopLog.Value := res.log
     ScrollEditToEnd(EdDesktopLog)
     HighlightDesktopStep(res.HasProp("failedAt") ? res.failedAt : 0, res.ok)
