@@ -196,6 +196,7 @@ class ScreenSpots {
             "display", ScreenSpots.CaptureDisplayProfile(),
             "delta", ScreenSpots.DefaultDelta,
             "passRatio", ScreenSpots.DefaultPassRatio,
+            "settleMs", ScreenSpots.SettleMs,
             "coordSpace", "client-pct",
             "spots", []
         )
