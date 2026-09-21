@@ -125,6 +125,9 @@ scripts/puzzle-pieces.json     ← Tab 2 catalog (repo root)
 - **Hotkeys** — `Ctrl+1` / `Ctrl+2` tab jump.
 - **Record helpers** — Reload latest · Open recordings; persist `LastSavedSpec` for Run saved test across restarts.
 - Chip filter status debounced.
+- Status bar OK/err tone; canvas flash on drop/block; terminal auto-scroll during puzzle run.
+- Record **Cancel** button; filter **Clear** (`Ctrl+L`); reload latest (`Ctrl+R`).
+- Tray Exit confirms when jobs busy; block Send/Run during train wipe.
 
 ### PR #4 — `ahk/overnight-polish` (merged)
 - **Chip→canvas drag-drop** — drag chips onto the canvas (ghost + drop target); click-to-add kept as fallback; Esc cancels drag; canvas highlights while hovered.
