@@ -480,7 +480,7 @@ BuildGui() {
         "WINDOWS DESKTOP UIA RECORDER — AutoHotkey + UI Automation only. Never Playwright / npx / @playwright/test.")
     try t3Banner.SetFont("s10 Bold c" Theme.Err, "Segoe UI")
     t3Hint := AppGui.Add("Text", "x24 y78 w700 c" Theme.FgDim,
-        "UIA ranked targets · click/dblclick/rclick/wheel/type. Strict spots = client-% checksums. Play highlights the current ListBox step.")
+        "UIA ranked targets · click/dblclick/rclick/drag/wheel/type/key. Strict spots = client-% checksums. Play highlights the current ListBox step.")
 
     ChkStrictSpots := AppGui.Add("CheckBox", "x740 y76 w200 c" Theme.Fg, "Strict fullscreen spots")
     try ChkStrictSpots.Value := 1

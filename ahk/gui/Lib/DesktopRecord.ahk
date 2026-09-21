@@ -210,7 +210,7 @@ class DesktopRecord {
         this._StartWheelHotkeys()
         SetTimer(this._Poll.Bind(this), DesktopRecord.MinPollMs)
         spotsNote := this.strictSpots ? " · Strict spots ON" : " · Strict spots OFF"
-        this._Status("Desktop UIA recording… click/dblclick/rclick/drag/wheel/type (Esc/Stop)" spotsNote, "ok")
+        this._Status("Desktop UIA recording… click/dblclick/rclick/drag/wheel/type/key (Esc/Stop)" spotsNote, "ok")
         return true
     }
 
@@ -428,6 +428,10 @@ class DesktopRecord {
             return
         if this._ShouldSkipTyping()
             return
+        ; Ctrl/Alt/Win chords are recorded as action:"key" via OnKeyDown — do not batch as type
+        if GetKeyState("Ctrl", "P") || GetKeyState("Alt", "P")
+            || GetKeyState("LWin", "P") || GetKeyState("RWin", "P")
+            return
         if ch = "" || ch = Chr(0)
             return
         ; Filter pure control chars except tab / newline (Enter handled in OnKeyDown)
@@ -444,12 +448,12 @@ class DesktopRecord {
             return
         if this._ShouldSkipTyping()
             return
-        ; Escape → stop (also polled); do not put into type buffer
+        ; Escape → stop (also polled); never record Esc as action:"key"
         if vk = 27 {  ; VK_ESCAPE
             this.StopRecord()
             return
         }
-        ; Backspace within current batch
+        ; Backspace within current batch (empty buffer = ignore; not a key step)
         if vk = 8 {  ; VK_BACK
             if this.typeBuf != "" {
                 this.typeBuf := SubStr(this.typeBuf, 1, -1)
@@ -471,6 +475,91 @@ class DesktopRecord {
         ; VK: Shift 16, Ctrl 17, Alt 18, LWin/RWin 91/92, Caps 20
         if vk = 16 || vk = 17 || vk = 18 || vk = 91 || vk = 92 || vk = 20
             return
+        ; Modifier chord or non-character special → action:"key" (not type batch)
+        if this._ShouldRecordAsKey(vk) {
+            keys := this._BuildSendKeys(vk)
+            if keys = ""
+                return
+            SetTimer(this._FlushTypeIdle.Bind(this), 0)
+            this._FlushTypeBatch("before-key")
+            this._FlushPendingClick()
+            this._FlushWheelBatch("before-key")
+            this._CaptureKey(keys)
+            return
+        }
+    }
+
+    ; Chord (Ctrl/Alt/Win+key) or nav/function/special alone → key step.
+    ; Shift+letter alone stays action:"type" via OnChar. Esc never reaches here as key.
+    _ShouldRecordAsKey(vk) {
+        vk := Integer(vk)
+        if GetKeyState("Ctrl", "P") || GetKeyState("Alt", "P")
+            || GetKeyState("LWin", "P") || GetKeyState("RWin", "P")
+            return true
+        ; F1–F12
+        if vk >= 0x70 && vk <= 0x7B
+            return true
+        ; Left/Up/Right/Down
+        if vk = 0x25 || vk = 0x26 || vk = 0x27 || vk = 0x28
+            return true
+        ; Home/End/PgUp/PgDn
+        if vk = 0x24 || vk = 0x23 || vk = 0x21 || vk = 0x22
+            return true
+        ; Insert/Delete
+        if vk = 0x2D || vk = 0x2E
+            return true
+        ; Apps/Menu
+        if vk = 0x5D
+            return true
+        ; Tab alone → type batch (\t via OnChar); Tab+mods covered above
+        return false
+    }
+
+    ; AHK Send-friendly string: ^s, !{F4}, {F5}, +{Left}, #{e}, …
+    _BuildSendKeys(vk) {
+        token := this._VkToSendToken(vk)
+        if token = ""
+            return ""
+        prefix := ""
+        if GetKeyState("Ctrl", "P")
+            prefix .= "^"
+        if GetKeyState("Alt", "P")
+            prefix .= "!"
+        if GetKeyState("Shift", "P")
+            prefix .= "+"
+        if GetKeyState("LWin", "P") || GetKeyState("RWin", "P")
+            prefix .= "#"
+        return prefix token
+    }
+
+    _VkToSendToken(vk) {
+        vk := Integer(vk)
+        name := ""
+        try name := GetKeyName(Format("vk{:02X}", vk))
+        if name = "" {
+            ; Minimal fallbacks if GetKeyName fails
+            static fallback := Map(
+                0x70, "F1", 0x71, "F2", 0x72, "F3", 0x73, "F4",
+                0x74, "F5", 0x75, "F6", 0x76, "F7", 0x77, "F8",
+                0x78, "F9", 0x79, "F10", 0x7A, "F11", 0x7B, "F12",
+                0x25, "Left", 0x26, "Up", 0x27, "Right", 0x28, "Down",
+                0x24, "Home", 0x23, "End", 0x21, "PgUp", 0x22, "PgDn",
+                0x2D, "Insert", 0x2E, "Delete", 0x09, "Tab", 0x5D, "AppsKey"
+            )
+            if fallback.Has(vk)
+                name := fallback[vk]
+        }
+        if name = ""
+            return ""
+        ; Single printable → lowercase letter/digit/symbol for Send (^s not ^S)
+        if StrLen(name) = 1 {
+            c := name
+            code := Ord(c)
+            if code >= 65 && code <= 90
+                return Chr(code + 32)
+            return c
+        }
+        return "{" name "}"
     }
 
     _ShouldSkipTyping() {
@@ -584,6 +673,84 @@ class DesktopRecord {
         this.steps.Push(step)
         this._Emit(step)
         this._Status("Recorded #" this.steps.Length ": type '" preview "'", "ok")
+    }
+
+    _CaptureKey(keys) {
+        keys := String(keys)
+        if keys = ""
+            return
+        desc := UiaCore.GetFocusedDescribe()
+        sx := 0, sy := 0, hwndUnder := 0
+        if desc is Map && desc.Has("ClickX") {
+            sx := desc["ClickX"], sy := desc["ClickY"]
+        } else {
+            try MouseGetPos(&sx, &sy, &hwndUnder)
+        }
+        if desc = "" || !(desc is Map) {
+            win := Map()
+            if !hwndUnder {
+                try hwndUnder := WinExist("A")
+            }
+            if hwndUnder {
+                try {
+                    win["Hwnd"] := hwndUnder
+                    win["Title"] := WinGetTitle("ahk_id " hwndUnder)
+                    win["Class"] := WinGetClass("ahk_id " hwndUnder)
+                    win["ProcessName"] := StrLower(WinGetProcessName("ahk_id " hwndUnder))
+                    win["ProcessId"] := WinGetPID("ahk_id " hwndUnder)
+                    WinGetPos(&wx, &wy, &ww, &wh, "ahk_id " hwndUnder)
+                    win["X"] := wx, win["Y"] := wy, win["W"] := ww, win["H"] := wh
+                }
+            }
+            desc := Map(
+                "AutomationId", "",
+                "Name", "",
+                "ControlType", 0,
+                "ControlTypeName", "",
+                "LocalizedControlType", "",
+                "ClassName", "",
+                "Window", win,
+                "ParentIndex", 0,
+                "Targets", [],
+                "ClickX", sx,
+                "ClickY", sy
+            )
+            this._Status("UIA miss @ key — stored window hard-keys only", "err")
+        }
+        step := Map(
+            "action", "key",
+            "keys", keys,
+            "timeoutMs", 4000,
+            "window", desc.Has("Window") ? desc["Window"] : Map(),
+            "targets", desc.Has("Targets") ? desc["Targets"] : [],
+            "captured", Map(
+                "AutomationId", desc.Has("AutomationId") ? desc["AutomationId"] : "",
+                "Name", desc.Has("Name") ? desc["Name"] : "",
+                "ControlType", desc.Has("ControlType") ? desc["ControlType"] : 0,
+                "ControlTypeName", desc.Has("ControlTypeName") ? desc["ControlTypeName"] : "",
+                "LocalizedControlType", desc.Has("LocalizedControlType") ? desc["LocalizedControlType"] : "",
+                "ClassName", desc.Has("ClassName") ? desc["ClassName"] : "",
+                "ParentIndex", desc.Has("ParentIndex") ? desc["ParentIndex"] : 0
+            ),
+            "screen", Map("x", sx, "y", sy)
+        )
+        if this.strictSpots {
+            hwndSpot := 0
+            if step["window"].Has("Hwnd")
+                hwndSpot := Integer(step["window"]["Hwnd"])
+            if !hwndSpot
+                hwndSpot := hwndUnder ? hwndUnder : (WinExist("A") || 0)
+            fs := ScreenSpots.IsProbablyFullscreen(hwndSpot)
+            if fs
+                this.noteFullscreen := true
+            pack := ScreenSpots.CapturePack(hwndSpot, fs)
+            step["spots"] := pack
+            if !IsObject(this.sessionDisplay) && pack.Has("display")
+                this.sessionDisplay := pack["display"]
+        }
+        this.steps.Push(step)
+        this._Emit(step)
+        this._Status("Recorded #" this.steps.Length ": " this.StepLabel(step), "ok")
     }
 
     _Poll() {
@@ -920,6 +1087,10 @@ class DesktopRecord {
             }
             return "drag " target endBit
         }
+        if action = "key" {
+            k := step.Has("keys") ? String(step["keys"]) : ""
+            return "key " k
+        }
         return "click " target
     }
 
@@ -1087,6 +1258,11 @@ class DesktopRecord {
                         Sleep(40)
                         return this._PlayType(hwnd, step, "", "soft-rel", hard)
                     }
+                    if actionEarly = "key" {
+                        UiaCore.SoftClickRelative(hwnd, st["relX"], st["relY"], false)
+                        Sleep(40)
+                        return this._PlayKey(hwnd, step, "", "soft-rel", hard)
+                    }
                     if actionEarly = "wheel" {
                         notches := this._StepNotches(step)
                         if !UiaCore.SoftWheelRelative(hwnd, st["relX"], st["relY"], notches)
@@ -1116,6 +1292,15 @@ class DesktopRecord {
                 }
                 return this._PlayType(hwnd, step, "", "", hard)
             }
+            if actionEarly = "key" {
+                if verifyOnly {
+                    spotRes := this._VerifyStepSpots(hwnd, step)
+                    if !spotRes.ok
+                        return spotRes
+                    return { ok: true, message: "VERIFY key window-only (no UIA hit)" (spotRes.message != "" ? " · " spotRes.message : "") }
+                }
+                return this._PlayKey(hwnd, step, "", "", hard)
+            }
             if actionEarly = "wheel" {
                 if verifyOnly {
                     spotRes := this._VerifyStepSpots(hwnd, step)
@@ -1138,6 +1323,9 @@ class DesktopRecord {
         action := step.Has("action") ? step["action"] : "click"
         if action = "type" {
             return this._PlayType(hwnd, step, resolved, used, hard)
+        }
+        if action = "key" {
+            return this._PlayKey(hwnd, step, resolved, used, hard)
         }
         if action = "wheel" {
             return this._PlayWheel(hwnd, step, resolved, used, hard)
@@ -1347,6 +1535,39 @@ class DesktopRecord {
             settle := 0
         Sleep(settle)
         baseMsg := "PLAY type ok via " how
+        spotRes := this._VerifyStepSpots(hwnd, step)
+        if !spotRes.ok
+            return spotRes
+        if spotRes.message != ""
+            baseMsg .= " · " spotRes.message
+        return { ok: true, message: baseMsg }
+    }
+
+    ; Key/chord playback: focus target when possible, then Send {Blind}+keys. Spots afterward.
+    _PlayKey(hwnd, step, resolved, used, hard) {
+        keys := step.Has("keys") ? String(step["keys"]) : ""
+        if keys = ""
+            return { ok: false, message: "FAIL key keys empty" }
+        el := IsObject(resolved) && IsObject(resolved.el) ? resolved.el : ""
+        how := used != "" ? used : "Send"
+        if IsObject(el) {
+            UiaCore.SetFocus(el)
+            Sleep(40)
+            how := used " SetFocus+Send"
+        } else {
+            try WinActivate("ahk_id " hwnd)
+            Sleep(40)
+            how := "Send (no UIA el)"
+        }
+        try Send("{Blind}" keys)
+        catch as e {
+            return { ok: false, message: "FAIL Send key via " how ": " e.Message }
+        }
+        settle := step.Has("settleMs") ? Integer(step["settleMs"]) : 80
+        if settle < 0
+            settle := 0
+        Sleep(settle)
+        baseMsg := "PLAY key ok via " how " (" keys ")"
         spotRes := this._VerifyStepSpots(hwnd, step)
         if !spotRes.ok
             return spotRes
