@@ -1,0 +1,33 @@
+{
+  "pin": "1.63.0",
+  "prefix": ["npx", "--no-install", "playwright"],
+  "cwd": "repo-root",
+  "nodeEngines": ">=20",
+  "pieces": [
+    { "id": 1, "label": "test", "argv": ["test"], "npmScript": "test", "slots": [] },
+    { "id": 2, "label": "test --ui", "argv": ["test", "--ui"], "npmScript": "test:ui", "slots": [] },
+    { "id": 3, "label": "test --debug", "argv": ["test", "--debug"], "npmScript": "test:debug", "slots": [] },
+    { "id": 4, "label": "test --headed", "argv": ["test", "--headed"], "npmScript": "test:headed", "slots": [] },
+    { "id": 5, "label": "test --project=chromium", "argv": ["test", "--project=chromium"], "npmScript": "test:chromium", "slots": [], "defaultFirstDrop": true },
+    { "id": 6, "label": "test --last-failed", "argv": ["test", "--last-failed"], "npmScript": "test:last-failed", "slots": [] },
+    { "id": 7, "label": "test --grep=", "argv": ["test", "--grep="], "npmScript": null, "slots": [{ "name": "grep", "required": true, "appendTo": "--grep=" }] },
+    { "id": 8, "label": "test --workers=1", "argv": ["test", "--workers=1"], "npmScript": "test:workers1", "slots": [] },
+    { "id": 9, "label": "test --reporter=html", "argv": ["test", "--reporter=html"], "npmScript": "test:html", "slots": [] },
+    { "id": 10, "label": "codegen", "argv": ["codegen"], "npmScript": "codegen", "slots": [{ "name": "url", "required": true, "position": "trailing" }] },
+    { "id": 11, "label": "install", "argv": ["install"], "npmScript": "install-browsers", "slots": [] },
+    { "id": 12, "label": "install chromium", "argv": ["install", "chromium"], "npmScript": "install:chromium", "slots": [] },
+    { "id": 13, "label": "install-deps", "argv": ["install-deps"], "npmScript": "install-deps", "slots": [] },
+    { "id": 14, "label": "show-report", "argv": ["show-report"], "npmScript": "show-report", "slots": [] },
+    { "id": 15, "label": "show-trace", "argv": ["show-trace"], "npmScript": "show-trace", "slots": [{ "name": "file", "required": true, "position": "trailing" }] },
+    { "id": 16, "label": "open", "argv": ["open"], "npmScript": "open", "slots": [{ "name": "url", "required": true, "position": "trailing" }] },
+    { "id": 17, "label": "screenshot", "argv": ["screenshot"], "npmScript": "screenshot", "slots": [{ "name": "url", "required": true, "position": "trailing" }, { "name": "out", "required": true, "position": "trailing" }] },
+    { "id": 18, "label": "pdf", "argv": ["pdf"], "npmScript": "pdf", "slots": [{ "name": "url", "required": true, "position": "trailing" }, { "name": "out", "required": true, "position": "trailing" }] },
+    { "id": 19, "label": "merge-reports", "argv": ["merge-reports"], "npmScript": "merge-reports", "slots": [] },
+    { "id": 20, "label": "clear-cache", "argv": ["clear-cache"], "npmScript": "clear-cache", "slots": [] }
+  ],
+  "runPolicy": {
+    "stopOnNonZero": true,
+    "order": "top-to-bottom",
+    "blockIncompleteSlots": true
+  }
+}

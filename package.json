@@ -5,15 +5,29 @@
   "description": "AutoHotkey wrappers around official Playwright stable (npx playwright)",
   "scripts": {
     "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:debug": "playwright test --debug",
+    "test:headed": "playwright test --headed",
+    "test:chromium": "playwright test --project=chromium",
+    "test:last-failed": "playwright test --last-failed",
+    "test:workers1": "playwright test --workers=1",
+    "test:html": "playwright test --reporter=html",
     "codegen": "playwright codegen",
     "install-browsers": "playwright install",
+    "install:chromium": "playwright install chromium",
+    "install-deps": "playwright install-deps",
     "show-report": "playwright show-report",
-    "show-trace": "playwright show-trace"
+    "show-trace": "playwright show-trace",
+    "open": "playwright open",
+    "screenshot": "playwright screenshot",
+    "pdf": "playwright pdf",
+    "merge-reports": "playwright merge-reports",
+    "clear-cache": "playwright clear-cache"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   }
 }
