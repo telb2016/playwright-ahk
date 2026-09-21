@@ -1366,8 +1366,9 @@ class DesktopRecord {
         return index + 1
     }
 
-    ; Play all steps. Returns {ok, failedAt, message, log}
-    Play(verifyOnly := false) {
+    ; Play steps from startIndex (0-based) through end. Default 0 = full run.
+    ; Returns {ok, failedAt, message, log}. failedAt is 1-based step index.
+    Play(verifyOnly := false, startIndex := 0) {
         if this.recording {
             return { ok: false, failedAt: 0, message: "Stop recording first", log: "" }
         }
@@ -1377,6 +1378,13 @@ class DesktopRecord {
             return { ok: false, failedAt: 0, message: "No desktop steps to play", log: "" }
         if !UiaCore.Ensure()
             return { ok: false, failedAt: 0, message: UiaCore.LastError, log: "" }
+
+        ; 0-based startIndex → 1-based AHK array index
+        startAt := Integer(startIndex) + 1
+        if startAt < 1
+            startAt := 1
+        if startAt > this.steps.Length
+            return { ok: false, failedAt: 0, message: "Start index out of range", log: "" }
 
         this.playing := true
         log := ""
@@ -1402,7 +1410,8 @@ class DesktopRecord {
             }
         }
 
-        for i, step in this.steps {
+        for i := startAt; i <= this.steps.Length; i++ {
+            step := this.steps[i]
             this._EmitPlayIndex(i)
             this._Status((verifyOnly ? "Verify" : "Play") " step " i "/" this.steps.Length "…")
             Sleep(15)  ; let ListBox / status paint
@@ -1418,13 +1427,17 @@ class DesktopRecord {
             }
         }
         this.playing := false
-        if ok
-            msg := (verifyOnly ? "Verify OK — " : "Play OK — ") this.steps.Length " steps"
+        if ok {
+            played := this.steps.Length - startAt + 1
+            msg := (verifyOnly ? "Verify OK — " : "Play OK — ") played " steps"
+            if startAt > 1
+                msg .= " (from #" startAt ")"
+        }
         this._Status(msg, ok ? "ok" : "err")
         return { ok: ok, failedAt: failedAt, message: msg, log: log }
     }
 
-    Verify() => this.Play(true)
+    Verify(startIndex := 0) => this.Play(true, startIndex)
 
     ; Single step: ranked targets; miss one ≠ fail until list exhausted.
     ; Hard-fail only on wrong process/window class.
