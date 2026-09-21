@@ -596,6 +596,18 @@ class UiaCore {
         return false
     }
 
+    ; Move onto element then settle (no click) — Tab3 action:"hover".
+    static InvokeHover(el, settleMs := 120) {
+        if !UiaCore.MoveToElement(el)
+            return false
+        settleMs := Integer(settleMs)
+        if settleMs < 0
+            settleMs := 0
+        if settleMs > 0
+            Sleep(settleMs)
+        return true
+    }
+
     ; Focused UIA element → same descriptor Map as ElementFromScreenPoint (or "").
     static GetFocusedDescribe() {
         if !UiaCore.Ensure()
@@ -719,6 +731,20 @@ class UiaCore {
                 Click(x " " y " " Integer(clickCount))
             else
                 Click(x " " y)
+            return true
+        }
+        return false
+    }
+
+    ; Move to window-relative point without clicking (soft hover fallback).
+    static SoftMoveRelative(hwnd, relX, relY) {
+        if !hwnd
+            return false
+        try {
+            WinGetPos(&wx, &wy, &ww, &wh, "ahk_id " hwnd)
+            x := wx + Round(relX * ww)
+            y := wy + Round(relY * wh)
+            MouseMove(x, y, 0)
             return true
         }
         return false
