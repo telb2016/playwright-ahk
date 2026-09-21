@@ -3,6 +3,63 @@
 #Include Theme.ahk
 
 class SlotEditor {
+    ; Remember last OK values per piece label+slot (session + optional ini path)
+    static LastValues := Map()
+    static IniPath := ""
+
+    static SetIniPath(path) {
+        SlotEditor.IniPath := path
+        SlotEditor.LoadPersisted()
+    }
+
+    static CacheKey(pieceLabel, slotName) => pieceLabel "|" slotName
+
+    static LoadPersisted() {
+        path := SlotEditor.IniPath
+        if path = "" || !FileExist(path)
+            return
+        try {
+            ; Ini section SlotMemory — keys are label_slot with unsafe chars flattened
+            ; We store as SlotMemory / key=value lines via IniRead of known slots on demand.
+        }
+    }
+
+    static Remember(pieceLabel, name, val) {
+        key := SlotEditor.CacheKey(pieceLabel, name)
+        SlotEditor.LastValues[key] := val
+        path := SlotEditor.IniPath
+        if path = ""
+            return
+        safe := SlotEditor.IniKey(pieceLabel, name)
+        try IniWrite(val, path, "SlotMemory", safe)
+    }
+
+    static Recall(pieceLabel, name) {
+        key := SlotEditor.CacheKey(pieceLabel, name)
+        if SlotEditor.LastValues.Has(key)
+            return SlotEditor.LastValues[key]
+        path := SlotEditor.IniPath
+        if path = "" || !FileExist(path)
+            return ""
+        safe := SlotEditor.IniKey(pieceLabel, name)
+        try {
+            v := IniRead(path, "SlotMemory", safe, "")
+            if v != "" {
+                SlotEditor.LastValues[key] := v
+                return v
+            }
+        }
+        return ""
+    }
+
+    static IniKey(pieceLabel, name) {
+        s := pieceLabel "_" name
+        s := RegExReplace(s, "[^\w\-]+", "_")
+        if StrLen(s) > 60
+            s := SubStr(s, 1, 60)
+        return s
+    }
+
     ; Prompt for all slots on a piece.
     ; Returns Map(name -> value) on OK, or "" on cancel / failed required.
     static Prompt(piece, ownerHwnd := 0) {
@@ -33,6 +90,9 @@ class SlotEditor {
             name := slot.Has("name") ? slot["name"] : "value"
             required := slot.Has("required") && slot["required"]
             def := SlotEditor.DefaultFor(name, piece)
+            recalled := SlotEditor.Recall(label, name)
+            if recalled != ""
+                def := recalled
             star := required ? " *" : ""
             g.Add("Text", "xm w420 c" Theme.FgDim, name star)
 
@@ -42,7 +102,7 @@ class SlotEditor {
                 Theme.StyleEdit(ed)
                 btnBrowse := g.Add("Button", "x+8 w90 h26", "Browse…")
                 Theme.StyleButton(btnBrowse)
-                btnBrowse.OnEvent("Click", SlotEditor.BrowseClick.Bind(ed, name))
+                btnBrowse.OnEvent("Click", SlotEditor.BrowseClick.Bind(ed, name, ownerHwnd))
             } else {
                 ed := g.Add("Edit", "xm w420 h26", def)
                 Theme.StyleEdit(ed)
@@ -70,7 +130,17 @@ class SlotEditor {
                         try item.ed.Focus()
                         return
                     }
+                    ; Light validation
+                    if item.name = "url" && val != "" && !RegExMatch(val, "i)^https?://") && !RegExMatch(val, "i)^file://") {
+                        errLbl.Value := "URL should start with http(s):// (or file://)"
+                        try item.ed.Focus()
+                        return
+                    }
                     vals[item.name] := val
+                }
+                for item in edits {
+                    if vals.Has(item.name) && vals[item.name] != ""
+                        SlotEditor.Remember(label, item.name, vals[item.name])
                 }
                 resultMap := vals
             } else {
@@ -87,14 +157,27 @@ class SlotEditor {
 
         hwnd := g.Hwnd
         Theme.ApplyDarkTitleBar(hwnd)
-        g.Show("w460")
+        ; Center over owner when possible
+        showOpts := "w460"
+        if ownerHwnd {
+            try {
+                WinGetPos(&ox, &oy, &ow, &oh, "ahk_id " ownerHwnd)
+                sx := ox + Max(Round((ow - 460) / 2), 0)
+                sy := oy + Max(Round((oh - 280) / 2), 40)
+                showOpts .= " x" sx " y" sy
+            }
+        }
+        g.Show(showOpts)
         if edits.Length
             try edits[1].ed.Focus()
         WinWaitClose("ahk_id " hwnd)
         return resultMap
     }
 
-    static BrowseClick(ed, name, *) {
+    static BrowseClick(ed, name, ownerHwnd := 0, *) {
+        opts := ""
+        if ownerHwnd
+            opts := "Owner" ownerHwnd
         if name = "file" {
             path := FileSelect(1, , "Select trace / report file", "Trace/Zip (*.zip)|*.zip|All (*.*)|*.*")
         } else {
