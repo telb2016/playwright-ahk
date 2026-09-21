@@ -3,11 +3,14 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 #Warn
+Persistent
 
 #Include Lib\Theme.ahk
 #Include Lib\ShellExec.ahk
 #Include Lib\Json.ahk
 #Include Lib\PuzzlePieces.ahk
+#Include Lib\SlotEditor.ahk
+#Include Lib\ChipDrag.ahk
 #Include ..\Playwright.ahk
 
 global AppGui, StatusBar
@@ -22,6 +25,7 @@ global ActiveTab, BtnTab1, BtnTab2
 global Tab1Ctrls, Tab2Ctrls
 global WipeGui, WipeLbl, WipeActive, WipeDir, WipeStep, WipeTarget
 global LastWinW, LastWinH
+global AppVisible
 
 CopilotJob := ""
 PuzzleJob := ""
@@ -36,22 +40,81 @@ WipeStep := 0
 WipeTarget := 1
 LastWinW := 980
 LastWinH := 720
+AppVisible := true
 
 RepoRoot := ShellExec.ResolveRepoRoot(A_ScriptFullPath)
 IniPath := A_ScriptDir "\PlaywrightAhkApp.ini"
 Catalog := PuzzlePieces.Load(RepoRoot)
 Canvas := PuzzleCanvas(Catalog)
 
+SetupTray()
 BuildGui()
 Theme.ApplyDarkTitleBar(AppGui.Hwnd)
-LoadIniPrompt()
-Canvas.SeedDefault()
-RefreshCanvasEdit()
-ShowTab(1, false)
+LoadIniAll()
+if Trim(EdCanvas.Value) = "" {
+    Canvas.SeedDefault()
+    RefreshCanvasEdit()
+}
+ShowTab(ActiveTab, true)
 SetStatus("Ready — repo root: " RepoRoot)
-AppGui.Show("w980 h720")
-ApplyChrome(980, 720)
+AppGui.Show("w" LastWinW " h" LastWinH)
+ApplyChrome(LastWinW, LastWinH)
+; Global show/focus hotkey
+Hotkey("^!p", ToggleShowFocus)
 return
+
+SetupTray() {
+    A_IconTip := "Playwright AHK — Overnight GUI"
+    try TraySetIcon(A_AhkPath, 1)
+    A_TrayMenu.Delete()
+    A_TrayMenu.Add("&Show / Focus`tCtrl+Alt+P", (*) => ToggleShowFocus())
+    A_TrayMenu.Add()
+    A_TrayMenu.Add("Copilot studio", (*) => (ShowAndFocus(), RequestTab(1)))
+    A_TrayMenu.Add("CLI puzzle", (*) => (ShowAndFocus(), RequestTab(2)))
+    A_TrayMenu.Add()
+    A_TrayMenu.Add("E&xit", OnTrayExit)
+    A_TrayMenu.Default := "&Show / Focus`tCtrl+Alt+P"
+    A_TrayMenu.ClickCount := 1
+}
+
+OnTrayExit(*) {
+    SaveIniAll()
+    OnCopilotCancel()
+    OnPuzzleCancel()
+    ExitApp()
+}
+
+ToggleShowFocus(*) {
+    global AppGui, AppVisible
+    if !AppVisible || !WinExist("ahk_id " AppGui.Hwnd) {
+        ShowAndFocus()
+        return
+    }
+    if WinActive("ahk_id " AppGui.Hwnd) {
+        HideToTray()
+    } else {
+        ShowAndFocus()
+    }
+}
+
+ShowAndFocus() {
+    global AppGui, AppVisible, LastWinW, LastWinH
+    AppVisible := true
+    try {
+        AppGui.Show("w" LastWinW " h" LastWinH)
+        WinActivate("ahk_id " AppGui.Hwnd)
+        ApplyChrome(LastWinW, LastWinH)
+    }
+    SetStatus("Focused — Ctrl+Alt+P toggles tray")
+}
+
+HideToTray() {
+    global AppGui, AppVisible
+    SaveIniAll()
+    AppVisible := false
+    try AppGui.Hide()
+    TrayTip("Playwright AHK", "Hidden to tray — Ctrl+Alt+P to restore", "Iconi")
+}
 
 BuildGui() {
     global AppGui, StatusBar
@@ -76,7 +139,7 @@ BuildGui() {
     BtnTab2.OnEvent("Click", (*) => RequestTab(2))
 
     AppGui.Add("Text", "x490 y18 w470 c" Theme.FgDim,
-        "Train wipe on tab switch · Ctrl+Enter Send · F5 Run · Del Backspace piece")
+        "Drag chips → canvas · Ctrl+Alt+P tray · Ctrl+Enter Send · F5 Run")
 
     ; ----- Tab 1 content -----
     t1Hint := AppGui.Add("Text", "x24 y56 w900 c" Theme.FgDim,
@@ -115,7 +178,7 @@ BuildGui() {
 
     ; ----- Tab 2 content -----
     t2Hint := AppGui.Add("Text", "x24 y56 w900 c" Theme.FgDim,
-        "Click chips to compose npx --no-install playwright ... from repo root. Empty/incomplete slots block Run. Multi-line stops on first nonzero.")
+        "Drag chips onto the canvas (or click to add). Slots open a dark editor. Empty/incomplete slots block Run.")
     t2PiecesLbl := AppGui.Add("Text", "x24 y86 w500", "Pieces  (" Catalog.pieces.Length " from scripts/puzzle-pieces.json)")
 
     chipCtrls := []
@@ -128,6 +191,7 @@ BuildGui() {
         btn := AppGui.Add("Button", "x" x " y" y " w" (colW - 8) " h26", piece["label"])
         Theme.StyleChip(btn)
         btn.OnEvent("Click", ChipClick.Bind(piece))
+        ChipDrag.RegisterChip(btn.Hwnd, piece)
         chipCtrls.Push(btn)
         if Mod(idx, cols) = 0 {
             x := 24
@@ -137,9 +201,11 @@ BuildGui() {
     }
     chipBottom := y + (Mod(Catalog.pieces.Length, cols) = 0 ? 0 : rowH) + 8
 
-    t2CanvasLbl := AppGui.Add("Text", "x24 y" chipBottom " w400", "Command canvas (editable; one command per line)")
+    t2CanvasLbl := AppGui.Add("Text", "x24 y" chipBottom " w400", "Command canvas (drop target · editable · one command per line)")
     EdCanvas := AppGui.Add("Edit", "x24 y" (chipBottom + 22) " w700 h120 Multi WantReturn VScroll", "")
     Theme.StyleEdit(EdCanvas)
+    ChipDrag.SetCanvas(EdCanvas.Hwnd)
+    ChipDrag.Install(OnChipDrop)
 
     by := chipBottom + 22
     BtnRun := AppGui.Add("Button", "x740 y" by " w200 h36", "Run")
@@ -163,15 +229,20 @@ BuildGui() {
     Theme.StyleButton(BtnCopy)
     BtnCopy.OnEvent("Click", OnPuzzleCopy)
 
-    termTop := by + 150
-    t2TermLbl := AppGui.Add("Text", "x24 y" termTop " w400", "Terminal mirror (live)")
-    EdTerminal := AppGui.Add("Edit", "x24 y" (termTop + 22) " w920 h190 Multi ReadOnly VScroll", "")
+    BtnSaveCanvas := AppGui.Add("Button", "x740 y" (by + 150) " w200 h28", "Save canvas")
+    Theme.StyleButton(BtnSaveCanvas)
+    BtnSaveCanvas.OnEvent("Click", OnSaveCanvas)
+
+    termTop := by + 186
+    t2TermLbl := AppGui.Add("Text", "x24 y" termTop " w400", "Terminal mirror (live · persisted)")
+    EdTerminal := AppGui.Add("Edit", "x24 y" (termTop + 22) " w920 h160 Multi ReadOnly VScroll", "")
     Theme.StyleEdit(EdTerminal)
 
     Tab2Ctrls := [t2Hint, t2PiecesLbl]
     for c in chipCtrls
         Tab2Ctrls.Push(c)
-    Tab2Ctrls.Push(t2CanvasLbl, EdCanvas, BtnRun, BtnCancelPuzzle, BtnClear, BtnBksp, BtnCopy, t2TermLbl, EdTerminal)
+    Tab2Ctrls.Push(t2CanvasLbl, EdCanvas, BtnRun, BtnCancelPuzzle, BtnClear, BtnBksp, BtnCopy
+        , BtnSaveCanvas, t2TermLbl, EdTerminal)
 
     StatusBar := AppGui.Add("Text", "x10 y675 w960 h24", " Ready")
     Theme.StyleStatus(StatusBar)
@@ -191,6 +262,7 @@ BuildGui() {
     Hotkey("^Enter", OnCopilotSend)
     Hotkey("F5", OnPuzzleRun)
     Hotkey("Delete", OnPuzzleBackspace)
+    Hotkey("Esc", OnEscDragOrFocus)
     HotIf()
 }
 
@@ -264,6 +336,7 @@ AnimateTrainWipe() {
         WipeActive := false
         try WipeGui.Hide()
         ShowTab(WipeTarget, true)
+        SaveIniAll()
         SetStatus(WipeTarget = 1 ? "Copilot prompt studio" : "Playwright CLI puzzle")
     }
 }
@@ -303,13 +376,20 @@ ApplyChrome(w, h) {
 }
 
 OnAppClose(*) {
-    OnCopilotCancel()
-    OnPuzzleCancel()
-    ExitApp()
+    ; Hide to tray instead of exit — Exit lives on the tray menu
+    HideToTray()
 }
 
 OnEsc(*) {
+    OnEscDragOrFocus()
+}
+
+OnEscDragOrFocus(*) {
     global AppGui, BtnTab1
+    if ChipDrag.Cancel() {
+        SetStatus("Drag cancelled")
+        return
+    }
     try BtnTab1.Focus()
 }
 
@@ -340,24 +420,25 @@ OnClearReply(*) {
 OnUseReplyAsPrompt(*) {
     global EdPrompt, EdReply
     reply := EdReply.Value
-    ; Strip loud auth banners if promoting a failed reply (keep body below banner)
     body := reply
-    if InStr(body, "COPILOT AUTH / LOGIN REQUIRED") {
-        ; Still allow promote — user may want to iterate on the text below
-    }
     if Trim(body) = "" {
         SetStatus("Reply is empty — nothing to promote")
         return
     }
     EdPrompt.Value := body
     try EdPrompt.Focus()
-    SaveIniPrompt()
+    SaveIniAll()
     SetStatus("Reply promoted → prompt (ready to Send)")
 }
 
 OnSavePrompt(*) {
-    SaveIniPrompt()
-    SetStatus("Prompt saved to ini")
+    SaveIniAll()
+    SetStatus("Saved prompt + canvas + terminal to ini")
+}
+
+OnSaveCanvas(*) {
+    SaveIniAll()
+    SetStatus("Canvas + terminal saved to ini")
 }
 
 OnCopilotSend(*) {
@@ -381,7 +462,7 @@ OnCopilotSend(*) {
         return
     }
 
-    SaveIniPrompt()
+    SaveIniAll()
     BusyCopilot := true
     try BtnSend.Enabled := false
     try BtnCancelCopilot.Enabled := true
@@ -438,33 +519,60 @@ PollCopilot() {
     try BtnCancelCopilot.Enabled := false
     SetStatus(code = 0 ? "Copilot finished OK" : "Copilot finished exit " code)
     CopilotJob := ""
+    SaveIniAll()
 }
 
-ChipClick(piece, *) {
-    global Canvas, Catalog
-    argv := Catalog.ResolvePieceArgv(piece, 0)
+; ---------- Puzzle chips / canvas ----------
+
+AddPieceToCanvas(piece) {
+    global Canvas, Catalog, AppGui
+    argv := Catalog.ResolvePieceArgv(piece, AppGui.Hwnd)
     if !(argv is Array) {
         SetStatus("Blocked — required slot empty or cancelled")
-        return
+        return false
     }
     Canvas.AddResolved(piece["label"], argv)
     RefreshCanvasEdit()
+    SaveIniAll()
     SetStatus("Added piece: " piece["label"])
+    return true
+}
+
+ChipClick(piece, *) {
+    if ChipDrag.ConsumeClick()
+        return
+    AddPieceToCanvas(piece)
+}
+
+OnChipDrop(piece) {
+    global ActiveTab
+    if ActiveTab != 2 {
+        RequestTab(2)
+    }
+    if AddPieceToCanvas(piece)
+        SetStatus("Dropped piece: " piece["label"])
 }
 
 OnPuzzleClear(*) {
-    global Canvas
+    global Canvas, EdCanvas
     Canvas.Clear()
+    EdCanvas.Value := ""
     RefreshCanvasEdit()
+    SaveIniAll()
     SetStatus("Canvas cleared")
 }
 
 OnPuzzleBackspace(*) {
-    global Canvas, ActiveTab
+    global Canvas, ActiveTab, EdCanvas
     if ActiveTab != 2
         return
-    Canvas.Backspace()
-    RefreshCanvasEdit()
+    if Canvas.Backspace() {
+        RefreshCanvasEdit()
+    } else {
+        ; Rows empty (e.g. restored from ini) — trim last line of edit text
+        EdCanvas.Value := Canvas.BackspaceText(EdCanvas.Value)
+    }
+    SaveIniAll()
     SetStatus("Removed last piece")
 }
 
@@ -550,6 +658,7 @@ OnPuzzleCancel(*) {
     try BtnCancelPuzzle.Enabled := false
     SetStatus("Puzzle run cancelled")
     PuzzleJob := ""
+    SaveIniAll()
 }
 
 PollPuzzle() {
@@ -576,26 +685,81 @@ PollPuzzle() {
     try BtnCancelPuzzle.Enabled := false
     SetStatus(code = 0 ? "Puzzle run OK" : "Puzzle stopped — exit " code)
     PuzzleJob := ""
+    SaveIniAll()
 }
 
-LoadIniPrompt() {
-    global EdPrompt, IniPath
+; ---------- Ini persistence ----------
+
+IniEscape(s) {
+    s := StrReplace(s, "`r`n", "`n")
+    s := StrReplace(s, "`r", "`n")
+    ; literal backslash-n in text becomes double-escaped so real newlines can use \n
+    s := StrReplace(s, "\n", "\\n")
+    s := StrReplace(s, "`n", "\n")
+    return s
+}
+
+IniUnescape(s) {
+    ph := Chr(1)
+    s := StrReplace(s, "\\n", ph)
+    s := StrReplace(s, "\n", "`n")
+    s := StrReplace(s, ph, "\n")
+    return s
+}
+
+LoadIniAll() {
+    global EdPrompt, EdCanvas, EdTerminal, IniPath, ActiveTab, LastWinW, LastWinH, Canvas
     if !FileExist(IniPath)
         return
     try {
         p := IniRead(IniPath, "Copilot", "LastPrompt", "")
-        p := StrReplace(p, "\n", "`n")
+        p := IniUnescape(p)
         if p != ""
             EdPrompt.Value := p
     }
+    try {
+        c := IniRead(IniPath, "Puzzle", "Canvas", "")
+        c := IniUnescape(c)
+        if Trim(c) != "" {
+            Canvas.Clear()
+            EdCanvas.Value := c
+        }
+    }
+    try {
+        t := IniRead(IniPath, "Puzzle", "LastTerminal", "")
+        t := IniUnescape(t)
+        if t != ""
+            EdTerminal.Value := t
+    }
+    try {
+        tab := Integer(IniRead(IniPath, "UI", "ActiveTab", "1"))
+        if tab = 1 || tab = 2
+            ActiveTab := tab
+    }
+    try {
+        w := Integer(IniRead(IniPath, "UI", "Width", "980"))
+        h := Integer(IniRead(IniPath, "UI", "Height", "720"))
+        if w >= 820 && h >= 600 {
+            LastWinW := w
+            LastWinH := h
+        }
+    }
 }
 
-SaveIniPrompt() {
-    global EdPrompt, IniPath
-    p := EdPrompt.Value
-    p := StrReplace(p, "`r`n", "`n")
-    p := StrReplace(p, "`n", "\n")
-    try IniWrite(p, IniPath, "Copilot", "LastPrompt")
+SaveIniAll() {
+    global EdPrompt, EdCanvas, EdTerminal, IniPath, ActiveTab, LastWinW, LastWinH
+    try {
+        IniWrite(IniEscape(EdPrompt.Value), IniPath, "Copilot", "LastPrompt")
+        IniWrite(IniEscape(EdCanvas.Value), IniPath, "Puzzle", "Canvas")
+        ; Cap terminal snippet so ini stays modest (~48 KB chars)
+        term := EdTerminal.Value
+        if StrLen(term) > 48000
+            term := SubStr(term, -47999)
+        IniWrite(IniEscape(term), IniPath, "Puzzle", "LastTerminal")
+        IniWrite(ActiveTab, IniPath, "UI", "ActiveTab")
+        IniWrite(LastWinW, IniPath, "UI", "Width")
+        IniWrite(LastWinH, IniPath, "UI", "Height")
+    }
 }
 
 SetStatus(msg) {

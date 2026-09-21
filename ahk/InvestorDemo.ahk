@@ -2,11 +2,13 @@
 ; Ctrl+Alt+1  Test
 ; Ctrl+Alt+2  Codegen https://playwright.dev
 ; Ctrl+Alt+3  ShowReport
+; Ctrl+Alt+0  Launch overnight GUI (PlaywrightAhkApp.ahk)
+; Note: Ctrl+Alt+P is reserved by the overnight GUI (show/focus / tray toggle).
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 #Include Playwright.ahk
 
-TrayTip("InvestorDemo", "Hotkeys armed:`nCtrl+Alt+1 Test`nCtrl+Alt+2 Codegen`nCtrl+Alt+3 ShowReport", "Iconi")
+TrayTip("InvestorDemo", "Hotkeys armed:`nCtrl+Alt+1 Test`nCtrl+Alt+2 Codegen`nCtrl+Alt+3 ShowReport`nCtrl+Alt+0 Overnight GUI", "Iconi")
 
 ^!1:: {
     try {
@@ -36,4 +38,14 @@ TrayTip("InvestorDemo", "Hotkeys armed:`nCtrl+Alt+1 Test`nCtrl+Alt+2 Codegen`nCt
     } catch as e {
         MsgBox(e.Message, "InvestorDemo — ShowReport failed", "Iconx")
     }
+}
+
+^!0:: {
+    guiScript := A_ScriptDir "\gui\PlaywrightAhkApp.ahk"
+    if !FileExist(guiScript) {
+        MsgBox("Missing: " guiScript, "InvestorDemo — GUI launch", "Iconx")
+        return
+    }
+    Run('"' A_AhkPath '" "' guiScript '"')
+    TrayTip("Overnight GUI", "Launched PlaywrightAhkApp`nCtrl+Alt+P show/focus", "Iconi")
 }

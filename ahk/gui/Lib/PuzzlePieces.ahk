@@ -2,6 +2,7 @@
 #Requires AutoHotkey v2.0
 #Include Json.ahk
 #Include ShellExec.ahk
+#Include SlotEditor.ahk
 
 class PuzzlePieces {
     prefix := ["npx", "--no-install", "playwright"]
@@ -60,7 +61,7 @@ class PuzzlePieces {
         return this.pieces.Length ? this.pieces[1] : ""
     }
 
-    ; Build argv tokens for a piece, prompting for required slots.
+    ; Build argv tokens for a piece, prompting for required slots via dark SlotEditor.
     ; Returns "" if user cancels or required slot left empty (block Run).
     ResolvePieceArgv(piece, ownerHwnd := 0) {
         argv := []
@@ -71,29 +72,21 @@ class PuzzlePieces {
         if !(slots is Array) || slots.Length = 0
             return argv
 
+        values := SlotEditor.Prompt(piece, ownerHwnd)
+        if values = ""
+            return ""  ; cancel => block
+        if !(values is Map)
+            return ""
+
         for slot in slots {
             name := slot.Has("name") ? slot["name"] : "value"
             required := slot.Has("required") && slot["required"]
-            def := ""
-            if name = "url"
-                def := "https://playwright.dev"
-            if name = "out"
-                def := name = "out" && InStr(piece["label"], "pdf") ? "page.pdf" : "shot.png"
-            if name = "file"
-                def := "trace.zip"
-            if name = "grep"
-                def := ""
-
-            prompt := "Piece: " piece["label"] "`nEnter value for slot '" name "'" (required ? " (required)" : "") ":"
-            res := InputBox(prompt, "Playwright puzzle slot", "w420 h160", def)
-            if res.Result != "OK" {
-                if required
-                    return ""  ; cancel + required => block
-                continue
-            }
-            val := Trim(res.Value)
+            val := values.Has(name) ? Trim(values[name]) : ""
             if required && val = ""
                 return ""  ; empty required slot => block
+
+            if val = ""
+                continue
 
             if slot.Has("appendTo") {
                 flag := slot["appendTo"]
@@ -167,8 +160,25 @@ class PuzzleCanvas {
     Count() => this.rows.Length
 
     Backspace() {
-        if this.rows.Length
+        if this.rows.Length {
             this.rows.Pop()
+            return true
+        }
+        return false
+    }
+
+    ; When rows model is empty but Edit has text (loaded from ini / user typed),
+    ; remove the last non-empty line from the text.
+    BackspaceText(text) {
+        lines := StrSplit(text, "`n", "`r")
+        while lines.Length && Trim(lines[lines.Length]) = ""
+            lines.Pop()
+        if lines.Length
+            lines.Pop()
+        out := ""
+        for i, line in lines
+            out .= (i > 1 ? "`n" : "") line
+        return out
     }
 
     AddResolved(label, argv) {
