@@ -17,6 +17,7 @@ class DesktopRecord {
     static WheelBatchMs := 180          ; coalesce rapid same-direction notches
     static DblClickSlopPx := 6          ; max movement between clicks of a dblclick
     static WheelDeltaPerNotch := 120    ; Win32 WHEEL_DELTA convention
+    static DragThresholdPx := 10        ; LButton move before click→drag
 
     steps := []          ; array of Maps
     recording := false
@@ -40,6 +41,7 @@ class DesktopRecord {
     pendingWheel := ""           ; Map {notches, tick, ...} coalescing wheel batch
     dblClickMs := 500            ; refreshed from GetDoubleClickTime at record start
     wheelHotkeysOn := false
+    dragState := ""              ; Map start capture while LButton drag active, or ""
 
     __New(repoRoot) {
         this.repoRoot := repoRoot
@@ -62,6 +64,7 @@ class DesktopRecord {
         this.typeLastTick := 0
         this.pendingClick := ""
         this.pendingWheel := ""
+        this.dragState := ""
     }
 
     Count() => this.steps.Length
@@ -199,6 +202,7 @@ class DesktopRecord {
         this.typeLastTick := 0
         this.pendingClick := ""
         this.pendingWheel := ""
+        this.dragState := ""
         this.dblClickMs := DesktopRecord.GetDoubleClickTimeMs()
         this.sessionDisplay := ScreenSpots.CaptureDisplayProfile()
         this.noteFullscreen := false
@@ -206,7 +210,7 @@ class DesktopRecord {
         this._StartWheelHotkeys()
         SetTimer(this._Poll.Bind(this), DesktopRecord.MinPollMs)
         spotsNote := this.strictSpots ? " · Strict spots ON" : " · Strict spots OFF"
-        this._Status("Desktop UIA recording… click/dblclick/rclick/wheel/type (Esc/Stop)" spotsNote, "ok")
+        this._Status("Desktop UIA recording… click/dblclick/rclick/drag/wheel/type (Esc/Stop)" spotsNote, "ok")
         return true
     }
 
@@ -219,7 +223,13 @@ class DesktopRecord {
         SetTimer(this._FlushPendingClick.Bind(this), 0)
         SetTimer(this._FlushWheelBatch.Bind(this), 0)
         this._FlushTypeBatch("stop")
-        this._FlushPendingClick()
+        ; Abandon in-progress drag (never emit left-click for a partial drag)
+        if this.dragState is Map {
+            this.dragState := ""
+            this.pendingClick := ""
+        } else {
+            this._FlushPendingClick()
+        }
         this._FlushWheelBatch("stop")
         this._StopTypeHook()
         this._StopWheelHotkeys()
@@ -589,6 +599,14 @@ class DesktopRecord {
                 this._FlushWheelBatch("before-click")
                 this._OnLeftClickEdge()
             }
+        } else if down && this.lastBtn {
+            ; Held — promote pending click → drag past threshold
+            if !this._ShouldSkipTyping()
+                this._MaybeEnterDrag()
+        } else if !down && this.lastBtn {
+            ; Up edge — finish drag if active (never emit left-click for a completed drag)
+            if this.dragState is Map
+                this._CommitDrag()
         }
         this.lastBtn := down
         rdown := GetKeyState("RButton", "P")
@@ -599,7 +617,13 @@ class DesktopRecord {
                 SetTimer(this._FlushTypeIdle.Bind(this), 0)
                 this._FlushTypeBatch("before-rclick")
                 this._FlushWheelBatch("before-rclick")
-                this._FlushPendingClick()  ; commit pending left before rclick
+                if this.dragState is Map {
+                    this.dragState := ""  ; abandon incomplete drag before rclick
+                    this.pendingClick := ""
+                    SetTimer(this._FlushPendingClick.Bind(this), 0)
+                } else {
+                    this._FlushPendingClick()  ; commit pending left before rclick
+                }
                 this._CaptureClick("rclick")
             }
         }
@@ -626,64 +650,161 @@ class DesktopRecord {
                 this._CaptureClick("dblclick")
                 return
             }
-            ; Stale / moved — commit prior as single click first
-            this._FlushPendingClick()
+            ; Stale / moved — commit prior as single click first (force: LButton is down for new press)
+            this._FlushPendingClick(true)
         }
         this.pendingClick := Map("tick", now, "x", sx, "y", sy)
         SetTimer(this._FlushPendingClick.Bind(this), -this.dblClickMs)
     }
 
-    _FlushPendingClick(*) {
+    ; force=true commits even while LButton is down (stale pending before a new press).
+    _FlushPendingClick(force := false, *) {
+        ; Timer / stop path: still holding — wait for up or drag (do not emit click yet)
+        if !force && this.pendingClick is Map && GetKeyState("LButton", "P") {
+            if this.dragState is Map {
+                ; Drag owns the gesture
+                this.pendingClick := ""
+                SetTimer(this._FlushPendingClick.Bind(this), 0)
+                return
+            }
+            SetTimer(this._FlushPendingClick.Bind(this), -50)
+            return
+        }
         pc := this.pendingClick
         this.pendingClick := ""
         SetTimer(this._FlushPendingClick.Bind(this), 0)
         if !(pc is Map)
             return
+        if this.dragState is Map
+            return  ; drag already claimed this press
         this.lastClickTick := A_TickCount
+        ; Capture at the original press point when forcing a stale click
+        if force && pc.Has("x") && pc.Has("y") {
+            desc := this._DescribeAt(Integer(pc["x"]), Integer(pc["y"]))
+            step := this._StepFromDesc("click", desc, Integer(pc["x"]), Integer(pc["y"]), true)
+            this.steps.Push(step)
+            this._Emit(step)
+            this._Status("Recorded #" this.steps.Length ": " this.StepLabel(step), "ok")
+            return
+        }
         this._CaptureClick("click")
     }
 
-    _CaptureClick(action := "click") {
-        MouseGetPos(&sx, &sy, &hwndUnder)
-        desc := UiaCore.ElementFromScreenPoint(sx, sy)
-        if desc = "" || !(desc is Map) {
-            ; Soft: still record window-relative click with empty hard targets
-            win := Map()
-            if hwndUnder {
-                try {
-                    win["Hwnd"] := hwndUnder
-                    win["Title"] := WinGetTitle("ahk_id " hwndUnder)
-                    win["Class"] := WinGetClass("ahk_id " hwndUnder)
-                    win["ProcessName"] := StrLower(WinGetProcessName("ahk_id " hwndUnder))
-                    win["ProcessId"] := WinGetPID("ahk_id " hwndUnder)
-                    WinGetPos(&wx, &wy, &ww, &wh, "ahk_id " hwndUnder)
-                    win["X"] := wx, win["Y"] := wy, win["W"] := ww, win["H"] := wh
-                }
-            }
-            desc := Map(
-                "AutomationId", "",
-                "Name", "",
-                "ControlType", 0,
-                "ControlTypeName", "",
-                "LocalizedControlType", "",
-                "ClassName", "",
-                "Window", win,
-                "ParentIndex", 0,
-                "Targets", [],
-                "ClickX", sx,
-                "ClickY", sy
+    ; If pending left-click and pointer moved past DragThresholdPx with button down → drag mode.
+    _MaybeEnterDrag() {
+        if this.dragState is Map
+            return
+        if !(this.pendingClick is Map)
+            return
+        MouseGetPos(&sx, &sy)
+        dx := Abs(sx - Integer(this.pendingClick["x"]))
+        dy := Abs(sy - Integer(this.pendingClick["y"]))
+        if dx <= DesktopRecord.DragThresholdPx && dy <= DesktopRecord.DragThresholdPx
+            return
+        ; Cancel pending click — this gesture is a drag, never a left-click
+        px := Integer(this.pendingClick["x"])
+        py := Integer(this.pendingClick["y"])
+        this.pendingClick := ""
+        SetTimer(this._FlushPendingClick.Bind(this), 0)
+        SetTimer(this._FlushTypeIdle.Bind(this), 0)
+        this._FlushTypeBatch("before-drag")
+        this._FlushWheelBatch("before-drag")
+        startDesc := this._DescribeAt(px, py)
+        stepStart := this._StepFromDesc("drag", startDesc, px, py, true)  ; spots at start only
+        this.dragState := Map(
+            "startX", px,
+            "startY", py,
+            "step", stepStart
+        )
+        this._Status("Drag…", "")
+    }
+
+    _CommitDrag() {
+        ds := this.dragState
+        this.dragState := ""
+        if !(ds is Map) || !(ds.Has("step") && ds["step"] is Map)
+            return
+        MouseGetPos(&ex, &ey)
+        endDesc := this._DescribeAt(ex, ey)
+        step := ds["step"]
+        step["action"] := "drag"
+        step["endScreen"] := Map("x", ex, "y", ey)
+        step["endWindow"] := endDesc.Has("Window") ? endDesc["Window"] : Map()
+        step["endTargets"] := endDesc.Has("Targets") ? endDesc["Targets"] : []
+        if endDesc.Has("AutomationId") || endDesc.Has("Name") {
+            step["endCaptured"] := Map(
+                "AutomationId", endDesc.Has("AutomationId") ? endDesc["AutomationId"] : "",
+                "Name", endDesc.Has("Name") ? endDesc["Name"] : "",
+                "ControlType", endDesc.Has("ControlType") ? endDesc["ControlType"] : 0,
+                "ControlTypeName", endDesc.Has("ControlTypeName") ? endDesc["ControlTypeName"] : "",
+                "LocalizedControlType", endDesc.Has("LocalizedControlType") ? endDesc["LocalizedControlType"] : "",
+                "ClassName", endDesc.Has("ClassName") ? endDesc["ClassName"] : "",
+                "ParentIndex", endDesc.Has("ParentIndex") ? endDesc["ParentIndex"] : 0
             )
-            if win.Has("W") && win["W"] > 0 {
-                desc["Targets"] := [Map(
-                    "rank", 99,
-                    "strategy", "WindowRelativeSoft",
-                    "relX", (sx - win["X"]) / win["W"],
-                    "relY", (sy - win["Y"]) / win["H"],
-                    "soft", true
-                )]
-            }
-            this._Status("UIA miss @ click — stored soft window-relative only", "err")
         }
+        this.lastClickTick := A_TickCount
+        this.steps.Push(step)
+        this._Emit(step)
+        label := this.StepLabel(step)
+        extra := ""
+        if step.Has("spots") && step["spots"].Has("spots")
+            extra := " · spots " step["spots"]["spots"].Length
+        this._Status("Recorded #" this.steps.Length ": " label extra, "ok")
+    }
+
+    ; Build UIA descriptor Map at screen point (soft window-relative when UIA misses).
+    _DescribeAt(sx, sy) {
+        desc := UiaCore.ElementFromScreenPoint(sx, sy)
+        if desc != "" && desc is Map
+            return desc
+        ; Soft: window under the recorded point (WindowFromPoint), not necessarily current cursor
+        hwndUnder := 0
+        try {
+            pt := (Integer(sy) << 32) | (Integer(sx) & 0xFFFFFFFF)
+            hwndUnder := DllCall("user32\WindowFromPoint", "int64", pt, "ptr")
+        }
+        if !hwndUnder {
+            MouseGetPos(, , &hwndUnder)
+        }
+        win := Map()
+        if hwndUnder {
+            try {
+                win["Hwnd"] := hwndUnder
+                win["Title"] := WinGetTitle("ahk_id " hwndUnder)
+                win["Class"] := WinGetClass("ahk_id " hwndUnder)
+                win["ProcessName"] := StrLower(WinGetProcessName("ahk_id " hwndUnder))
+                win["ProcessId"] := WinGetPID("ahk_id " hwndUnder)
+                WinGetPos(&wx, &wy, &ww, &wh, "ahk_id " hwndUnder)
+                win["X"] := wx, win["Y"] := wy, win["W"] := ww, win["H"] := wh
+            }
+        }
+        desc := Map(
+            "AutomationId", "",
+            "Name", "",
+            "ControlType", 0,
+            "ControlTypeName", "",
+            "LocalizedControlType", "",
+            "ClassName", "",
+            "Window", win,
+            "ParentIndex", 0,
+            "Targets", [],
+            "ClickX", sx,
+            "ClickY", sy
+        )
+        if win.Has("W") && win["W"] > 0 && win.Has("H") && win["H"] > 0 {
+            desc["Targets"] := [Map(
+                "rank", 99,
+                "strategy", "WindowRelativeSoft",
+                "relX", (sx - win["X"]) / win["W"],
+                "relY", (sy - win["Y"]) / win["H"],
+                "soft", true
+            )]
+        }
+        return desc
+    }
+
+    ; Shared step skeleton from a Describe map (optional Strict spots).
+    _StepFromDesc(action, desc, sx, sy, withSpots := true) {
         step := Map(
             "action", action,
             "timeoutMs", 4000,
@@ -700,13 +821,14 @@ class DesktopRecord {
             ),
             "screen", Map("x", sx, "y", sy)
         )
-        ; Hybrid: client-area % spots (never taskbar) when Strict spots enabled
-        if this.strictSpots {
+        if withSpots && this.strictSpots {
             hwndSpot := 0
             if step["window"].Has("Hwnd")
                 hwndSpot := Integer(step["window"]["Hwnd"])
-            if !hwndSpot
+            if !hwndSpot {
+                MouseGetPos(, , &hwndUnder)
                 hwndSpot := hwndUnder
+            }
             try {
                 if hwndSpot
                     WinActivate("ahk_id " hwndSpot)
@@ -719,6 +841,24 @@ class DesktopRecord {
             if !IsObject(this.sessionDisplay) && pack.Has("display")
                 this.sessionDisplay := pack["display"]
         }
+        return step
+    }
+
+    _CaptureClick(action := "click") {
+        MouseGetPos(&sx, &sy)
+        desc := this._DescribeAt(sx, sy)
+        hardMiss := true
+        if desc is Map && desc.Has("Targets") && desc["Targets"] is Array {
+            for t in desc["Targets"] {
+                if t is Map && !(t.Has("soft") && t["soft"]) {
+                    hardMiss := false
+                    break
+                }
+            }
+        }
+        if hardMiss && action != "drag"
+            this._Status("UIA miss @ " action " — stored soft window-relative only", "err")
+        step := this._StepFromDesc(action, desc, sx, sy, true)
         this.steps.Push(step)
         this._Emit(step)
         label := this.StepLabel(step)
@@ -764,6 +904,22 @@ class DesktopRecord {
             return "dblclick " target
         if action = "rclick" || action = "rightclick"
             return "rclick " target
+        if action = "drag" {
+            endBit := ""
+            if step.Has("endScreen") && step["endScreen"] is Map {
+                ex := step["endScreen"].Has("x") ? Integer(step["endScreen"]["x"]) : "?"
+                ey := step["endScreen"].Has("y") ? Integer(step["endScreen"]["y"]) : "?"
+                endBit := " → @" ex "," ey
+            } else if step.Has("endCaptured") && step["endCaptured"] is Map {
+                en := step["endCaptured"].Has("Name") ? Trim(step["endCaptured"]["Name"]) : ""
+                ea := step["endCaptured"].Has("AutomationId") ? Trim(step["endCaptured"]["AutomationId"]) : ""
+                if ea != ""
+                    endBit := " → AutomationId=" ea
+                else if en != ""
+                    endBit := " → '" en "'"
+            }
+            return "drag " target endBit
+        }
         return "click " target
     }
 
@@ -880,6 +1036,11 @@ class DesktopRecord {
         }
 
         try WinActivate("ahk_id " hwnd)
+
+        ; Drag is self-contained (start hard-gate already enforced above)
+        actionGate := step.Has("action") ? step["action"] : "click"
+        if actionGate = "drag"
+            return this._PlayDrag(hwnd, step, verifyOnly, timeoutMs)
 
         ; Separate hard vs soft targets
         hard := []
@@ -1002,6 +1163,147 @@ class DesktopRecord {
         baseMsg := IsObject(check) && IsObject(check.el)
             ? "PLAY ok via " used " (post-check)"
             : "PLAY ok via " used " (post-check soft miss)"
+        spotRes := this._VerifyStepSpots(hwnd, step)
+        if !spotRes.ok
+            return spotRes
+        if spotRes.message != ""
+            baseMsg .= " · " spotRes.message
+        return { ok: true, message: baseMsg }
+    }
+
+    ; Drag playback: start via ranked targets; end via endTargets else soft endScreen/relative.
+    _PlayDrag(hwnd, step, verifyOnly, timeoutMs) {
+        if verifyOnly {
+            spotRes := this._VerifyStepSpots(hwnd, step)
+            if !spotRes.ok
+                return spotRes
+            return { ok: true, message: "VERIFY drag ok" (spotRes.message != "" ? " · " spotRes.message : "") }
+        }
+
+        targets := step.Has("targets") ? step["targets"] : []
+        hard := []
+        soft := []
+        if targets is Array {
+            for t in targets {
+                if !(t is Map)
+                    continue
+                if t.Has("soft") && t["soft"]
+                    soft.Push(t)
+                else
+                    hard.Push(t)
+            }
+        }
+
+        startEl := ""
+        used := ""
+        if hard.Length {
+            resolved := UiaCore.ResolveFromTargets(hwnd, hard, timeoutMs)
+            if IsObject(resolved) && IsObject(resolved.el) {
+                startEl := resolved.el
+                used := resolved.strategy
+            }
+        }
+
+        ; Resolve end element when endTargets present
+        endEl := ""
+        endUsed := ""
+        endTargets := step.Has("endTargets") ? step["endTargets"] : []
+        endWinMap := step.Has("endWindow") ? step["endWindow"] : Map()
+        endHwnd := hwnd
+        if endWinMap is Map && (endWinMap.Has("Class") || endWinMap.Has("ProcessName")) {
+            try {
+                eh := UiaCore.FindWindowHwnd(endWinMap, Min(timeoutMs, 3000))
+                if eh
+                    endHwnd := eh
+            }
+        }
+        endHard := []
+        endSoft := []
+        if endTargets is Array {
+            for t in endTargets {
+                if !(t is Map)
+                    continue
+                if t.Has("soft") && t["soft"]
+                    endSoft.Push(t)
+                else
+                    endHard.Push(t)
+            }
+        }
+        if endHard.Length {
+            er := UiaCore.ResolveFromTargets(endHwnd, endHard, timeoutMs)
+            if IsObject(er) && IsObject(er.el) {
+                endEl := er.el
+                endUsed := er.strategy
+            }
+        }
+
+        ok := false
+        how := ""
+        if IsObject(startEl) && IsObject(endEl) {
+            ok := UiaCore.InvokeDrag(startEl, endEl)
+            how := used " → " endUsed
+        } else if IsObject(startEl) {
+            ; Start UIA + end screen / soft relative
+            p1 := UiaCore.ElementClickPoint(startEl)
+            if IsObject(p1) {
+                ex := "", ey := ""
+                if step.Has("endScreen") && step["endScreen"] is Map {
+                    ex := step["endScreen"].Has("x") ? Integer(step["endScreen"]["x"]) : ""
+                    ey := step["endScreen"].Has("y") ? Integer(step["endScreen"]["y"]) : ""
+                }
+                if ex = "" && endSoft.Length && endSoft[1].Has("relX") {
+                    try {
+                        WinGetPos(&wx, &wy, &ww, &wh, "ahk_id " endHwnd)
+                        ex := wx + Round(Float(endSoft[1]["relX"]) * ww)
+                        ey := wy + Round(Float(endSoft[1]["relY"]) * wh)
+                    }
+                }
+                if ex != "" && ey != "" {
+                    ok := UiaCore.DragScreen(p1.x, p1.y, ex, ey)
+                    how := used " → endScreen"
+                }
+            }
+        }
+
+        ; Soft window-relative last resort (start + end rel on start hwnd)
+        if !ok {
+            relX1 := "", relY1 := "", relX2 := "", relY2 := ""
+            if soft.Length && soft[1].Has("relX") {
+                relX1 := soft[1]["relX"], relY1 := soft[1]["relY"]
+            } else if step.Has("screen") && step["screen"] is Map {
+                try {
+                    WinGetPos(&wx, &wy, &ww, &wh, "ahk_id " hwnd)
+                    if ww > 0 && wh > 0 {
+                        relX1 := (Integer(step["screen"]["x"]) - wx) / ww
+                        relY1 := (Integer(step["screen"]["y"]) - wy) / wh
+                    }
+                }
+            }
+            if endSoft.Length && endSoft[1].Has("relX") {
+                relX2 := endSoft[1]["relX"], relY2 := endSoft[1]["relY"]
+            } else if step.Has("endScreen") && step["endScreen"] is Map {
+                try {
+                    WinGetPos(&wx, &wy, &ww, &wh, "ahk_id " hwnd)
+                    if ww > 0 && wh > 0 {
+                        relX2 := (Integer(step["endScreen"]["x"]) - wx) / ww
+                        relY2 := (Integer(step["endScreen"]["y"]) - wy) / wh
+                    }
+                }
+            }
+            if relX1 != "" && relY1 != "" && relX2 != "" && relY2 != "" {
+                ok := UiaCore.SoftDragRelative(hwnd, relX1, relY1, relX2, relY2)
+                how := "soft WindowRelative"
+            }
+        }
+
+        if !ok
+            return { ok: false, message: "FAIL drag" (how != "" ? " via " how : "") }
+
+        settle := step.Has("settleMs") ? Integer(step["settleMs"]) : 80
+        if settle < 0
+            settle := 0
+        Sleep(settle)
+        baseMsg := "PLAY drag ok via " how
         spotRes := this._VerifyStepSpots(hwnd, step)
         if !spotRes.ok
             return spotRes
