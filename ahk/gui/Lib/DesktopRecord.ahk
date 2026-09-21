@@ -14,6 +14,9 @@ class DesktopRecord {
     static MinPollMs := 30
     static ClickDebounceMs := 180
     static TypeIdleMs := 500
+    static WheelBatchMs := 180          ; coalesce rapid same-direction notches
+    static DblClickSlopPx := 6          ; max movement between clicks of a dblclick
+    static WheelDeltaPerNotch := 120    ; Win32 WHEEL_DELTA convention
 
     steps := []          ; array of Maps
     recording := false
@@ -32,6 +35,11 @@ class DesktopRecord {
     typeBuf := ""                ; pending typed characters for current batch
     typeLastTick := 0
     ignoreHwnd := 0              ; host GUI hwnd — skip typing while our app is focused
+    onPlayIndex := ""            ; callback(index) — highlight step during Play/Verify
+    pendingClick := ""           ; Map draft step awaiting dblclick window, or ""
+    pendingWheel := ""           ; Map {notches, tick, ...} coalescing wheel batch
+    dblClickMs := 500            ; refreshed from GetDoubleClickTime at record start
+    wheelHotkeysOn := false
 
     __New(repoRoot) {
         this.repoRoot := repoRoot
@@ -52,6 +60,8 @@ class DesktopRecord {
         this.noteFullscreen := false
         this.typeBuf := ""
         this.typeLastTick := 0
+        this.pendingClick := ""
+        this.pendingWheel := ""
     }
 
     Count() => this.steps.Length
@@ -187,12 +197,16 @@ class DesktopRecord {
         this.lastClickTick := 0
         this.typeBuf := ""
         this.typeLastTick := 0
+        this.pendingClick := ""
+        this.pendingWheel := ""
+        this.dblClickMs := DesktopRecord.GetDoubleClickTimeMs()
         this.sessionDisplay := ScreenSpots.CaptureDisplayProfile()
         this.noteFullscreen := false
         this._StartTypeHook()
+        this._StartWheelHotkeys()
         SetTimer(this._Poll.Bind(this), DesktopRecord.MinPollMs)
         spotsNote := this.strictSpots ? " · Strict spots ON" : " · Strict spots OFF"
-        this._Status("Desktop UIA recording… click/type targets (Esc/Stop)" spotsNote, "ok")
+        this._Status("Desktop UIA recording… click/dblclick/wheel/type (Esc/Stop)" spotsNote, "ok")
         return true
     }
 
@@ -202,9 +216,178 @@ class DesktopRecord {
         this.recording := false
         SetTimer(this._Poll.Bind(this), 0)
         SetTimer(this._FlushTypeIdle.Bind(this), 0)
+        SetTimer(this._FlushPendingClick.Bind(this), 0)
+        SetTimer(this._FlushWheelBatch.Bind(this), 0)
         this._FlushTypeBatch("stop")
+        this._FlushPendingClick()
+        this._FlushWheelBatch("stop")
         this._StopTypeHook()
+        this._StopWheelHotkeys()
         this._Status("Recording stopped — " this.steps.Length " steps", "ok")
+    }
+
+    static GetDoubleClickTimeMs() {
+        try {
+            ms := Integer(DllCall("user32\GetDoubleClickTime"))
+            if ms > 0
+                return ms
+        }
+        return 500
+    }
+
+    _StartWheelHotkeys() {
+        this._StopWheelHotkeys()
+        ; Rapid notches must not trip AHK's hotkey flood dialog
+        try A_MaxHotkeysPerInterval := 400
+        try A_HotkeyInterval := 1000
+        try {
+            Hotkey("~WheelUp", this._OnWheelUp.Bind(this), "On")
+            Hotkey("~WheelDown", this._OnWheelDown.Bind(this), "On")
+            this.wheelHotkeysOn := true
+        } catch as e {
+            this.wheelHotkeysOn := false
+            this._Status("Wheel hotkeys failed: " e.Message, "err")
+        }
+    }
+
+    _StopWheelHotkeys() {
+        if !this.wheelHotkeysOn
+            return
+        this.wheelHotkeysOn := false
+        try Hotkey("~WheelUp", "Off")
+        try Hotkey("~WheelDown", "Off")
+    }
+
+    _OnWheelUp(*) {
+        this._AccumulateWheel(1)
+    }
+
+    _OnWheelDown(*) {
+        this._AccumulateWheel(-1)
+    }
+
+    _AccumulateWheel(dir) {
+        if !this.recording
+            return
+        if this._ShouldSkipTyping()
+            return
+        dir := Integer(dir)
+        if dir = 0
+            return
+        ; Finish pending type / click so order stays chronological
+        SetTimer(this._FlushTypeIdle.Bind(this), 0)
+        this._FlushTypeBatch("before-wheel")
+        this._FlushPendingClick()
+        now := A_TickCount
+        if this.pendingWheel is Map {
+            prev := Integer(this.pendingWheel.Has("notches") ? this.pendingWheel["notches"] : 0)
+            sameDir := (prev = 0) || ((prev > 0) = (dir > 0))
+            fresh := (now - Integer(this.pendingWheel["tick"])) <= DesktopRecord.WheelBatchMs
+            if sameDir && fresh {
+                this.pendingWheel["notches"] := prev + dir
+                this.pendingWheel["tick"] := now
+                SetTimer(this._FlushWheelBatch.Bind(this), -DesktopRecord.WheelBatchMs)
+                return
+            }
+            this._FlushWheelBatch("direction-change")
+        }
+        MouseGetPos(&sx, &sy, &hwndUnder)
+        desc := UiaCore.ElementFromScreenPoint(sx, sy)
+        if desc = "" || !(desc is Map) {
+            win := Map()
+            if hwndUnder {
+                try {
+                    win["Hwnd"] := hwndUnder
+                    win["Title"] := WinGetTitle("ahk_id " hwndUnder)
+                    win["Class"] := WinGetClass("ahk_id " hwndUnder)
+                    win["ProcessName"] := StrLower(WinGetProcessName("ahk_id " hwndUnder))
+                    win["ProcessId"] := WinGetPID("ahk_id " hwndUnder)
+                    WinGetPos(&wx, &wy, &ww, &wh, "ahk_id " hwndUnder)
+                    win["X"] := wx, win["Y"] := wy, win["W"] := ww, win["H"] := wh
+                }
+            }
+            desc := Map(
+                "AutomationId", "",
+                "Name", "",
+                "ControlType", 0,
+                "ControlTypeName", "",
+                "LocalizedControlType", "",
+                "ClassName", "",
+                "Window", win,
+                "ParentIndex", 0,
+                "Targets", [],
+                "ClickX", sx,
+                "ClickY", sy
+            )
+            if win.Has("W") && win["W"] > 0 {
+                desc["Targets"] := [Map(
+                    "rank", 99,
+                    "strategy", "WindowRelativeSoft",
+                    "relX", (sx - win["X"]) / win["W"],
+                    "relY", (sy - win["Y"]) / win["H"],
+                    "soft", true
+                )]
+            }
+        }
+        this.pendingWheel := Map(
+            "notches", dir,
+            "tick", now,
+            "desc", desc,
+            "sx", sx,
+            "sy", sy,
+            "hwndUnder", hwndUnder ? hwndUnder : 0
+        )
+        SetTimer(this._FlushWheelBatch.Bind(this), -DesktopRecord.WheelBatchMs)
+    }
+
+    _FlushWheelBatch(reason := "idle") {
+        pw := this.pendingWheel
+        this.pendingWheel := ""
+        SetTimer(this._FlushWheelBatch.Bind(this), 0)
+        if !(pw is Map)
+            return
+        notches := Integer(pw.Has("notches") ? pw["notches"] : 0)
+        if notches = 0
+            return
+        desc := pw["desc"]
+        sx := pw["sx"], sy := pw["sy"]
+        hwndUnder := pw.Has("hwndUnder") ? pw["hwndUnder"] : 0
+        step := Map(
+            "action", "wheel",
+            "notches", notches,
+            "delta", notches * DesktopRecord.WheelDeltaPerNotch,
+            "timeoutMs", 4000,
+            "window", desc.Has("Window") ? desc["Window"] : Map(),
+            "targets", desc.Has("Targets") ? desc["Targets"] : [],
+            "captured", Map(
+                "AutomationId", desc.Has("AutomationId") ? desc["AutomationId"] : "",
+                "Name", desc.Has("Name") ? desc["Name"] : "",
+                "ControlType", desc.Has("ControlType") ? desc["ControlType"] : 0,
+                "ControlTypeName", desc.Has("ControlTypeName") ? desc["ControlTypeName"] : "",
+                "LocalizedControlType", desc.Has("LocalizedControlType") ? desc["LocalizedControlType"] : "",
+                "ClassName", desc.Has("ClassName") ? desc["ClassName"] : "",
+                "ParentIndex", desc.Has("ParentIndex") ? desc["ParentIndex"] : 0
+            ),
+            "screen", Map("x", sx, "y", sy),
+            "wheelReason", reason
+        )
+        if this.strictSpots {
+            hwndSpot := 0
+            if step["window"].Has("Hwnd")
+                hwndSpot := Integer(step["window"]["Hwnd"])
+            if !hwndSpot
+                hwndSpot := hwndUnder
+            fs := ScreenSpots.IsProbablyFullscreen(hwndSpot)
+            if fs
+                this.noteFullscreen := true
+            pack := ScreenSpots.CapturePack(hwndSpot, fs)
+            step["spots"] := pack
+            if !IsObject(this.sessionDisplay) && pack.Has("display")
+                this.sessionDisplay := pack["display"]
+        }
+        this.steps.Push(step)
+        this._Emit(step)
+        this._Status("Recorded #" this.steps.Length ": " this.StepLabel(step), "ok")
     }
 
     _StartTypeHook() {
@@ -400,13 +583,10 @@ class DesktopRecord {
         }
         down := GetKeyState("LButton", "P")
         if down && !this.lastBtn {
-            if (A_TickCount - this.lastClickTick) >= DesktopRecord.ClickDebounceMs {
-                this.lastClickTick := A_TickCount
-                ; Finish any pending type batch before the click so order is preserved
-                SetTimer(this._FlushTypeIdle.Bind(this), 0)
-                this._FlushTypeBatch("before-click")
-                this._CaptureClick("click")
-            }
+            SetTimer(this._FlushTypeIdle.Bind(this), 0)
+            this._FlushTypeBatch("before-click")
+            this._FlushWheelBatch("before-click")
+            this._OnLeftClickEdge()
         }
         this.lastBtn := down
         rdown := GetKeyState("RButton", "P")
@@ -415,6 +595,8 @@ class DesktopRecord {
                 this.lastClickTick := A_TickCount
                 SetTimer(this._FlushTypeIdle.Bind(this), 0)
                 this._FlushTypeBatch("before-click")
+                this._FlushWheelBatch("before-click")
+                this._FlushPendingClick()  ; commit pending left before rightclick
                 this._CaptureClick("rightclick")
             }
         }
@@ -423,6 +605,39 @@ class DesktopRecord {
         if GetKeyState("Escape", "P") {
             this.StopRecord()
         }
+    }
+
+    ; Left-button edge: defer commit for GetDoubleClickTime so a true dblclick is one step.
+    _OnLeftClickEdge() {
+        MouseGetPos(&sx, &sy)
+        now := A_TickCount
+        slop := DesktopRecord.DblClickSlopPx
+        if this.pendingClick is Map {
+            dt := now - Integer(this.pendingClick["tick"])
+            dx := Abs(sx - Integer(this.pendingClick["x"]))
+            dy := Abs(sy - Integer(this.pendingClick["y"]))
+            if dt <= this.dblClickMs && dx <= slop && dy <= slop {
+                SetTimer(this._FlushPendingClick.Bind(this), 0)
+                this.pendingClick := ""
+                this.lastClickTick := now
+                this._CaptureClick("dblclick")
+                return
+            }
+            ; Stale / moved — commit prior as single click first
+            this._FlushPendingClick()
+        }
+        this.pendingClick := Map("tick", now, "x", sx, "y", sy)
+        SetTimer(this._FlushPendingClick.Bind(this), -this.dblClickMs)
+    }
+
+    _FlushPendingClick(*) {
+        pc := this.pendingClick
+        this.pendingClick := ""
+        SetTimer(this._FlushPendingClick.Bind(this), 0)
+        if !(pc is Map)
+            return
+        this.lastClickTick := A_TickCount
+        this._CaptureClick("click")
     }
 
     _CaptureClick(action := "click") {
@@ -535,6 +750,15 @@ class DesktopRecord {
             t := StrReplace(StrReplace(t, "`n", "\n"), "`r", "")
             return "type '" t "' → " target
         }
+        if action = "wheel" {
+            notches := step.Has("notches") ? Integer(step["notches"]) : 0
+            if !notches && step.Has("delta")
+                notches := Integer(step["delta"]) // DesktopRecord.WheelDeltaPerNotch
+            dir := notches >= 0 ? "Up" : "Down"
+            return "wheel" dir " x" Abs(notches) " " target
+        }
+        if action = "dblclick"
+            return "dblclick " target
         if action = "rightclick"
             return "rightclick " target
         return "click " target
@@ -601,7 +825,9 @@ class DesktopRecord {
         }
 
         for i, step in this.steps {
+            this._EmitPlayIndex(i)
             this._Status((verifyOnly ? "Verify" : "Play") " step " i "/" this.steps.Length "…")
+            Sleep(15)  ; let ListBox / status paint
             res := this.RunStep(step, verifyOnly)
             line := "#" i " " this.StepLabel(step) " → " res.message "`n"
             log .= line
@@ -609,6 +835,7 @@ class DesktopRecord {
                 ok := false
                 failedAt := i
                 msg := res.message
+                this._EmitPlayIndex(i)  ; leave failing step selected
                 break
             }
         }
@@ -683,6 +910,7 @@ class DesktopRecord {
                 st := soft[1]
                 if st.Has("relX") {
                     right := (actionEarly = "rightclick")
+                    dbl := (actionEarly = "dblclick")
                     if verifyOnly {
                         spotRes := this._VerifyStepSpots(hwnd, step)
                         if !spotRes.ok
@@ -695,7 +923,17 @@ class DesktopRecord {
                         Sleep(40)
                         return this._PlayType(hwnd, step, "", "soft-rel", hard)
                     }
-                    if UiaCore.SoftClickRelative(hwnd, st["relX"], st["relY"], right) {
+                    if actionEarly = "wheel" {
+                        notches := this._StepNotches(step)
+                        if !UiaCore.SoftWheelRelative(hwnd, st["relX"], st["relY"], notches)
+                            return { ok: false, message: "FAIL soft wheel" }
+                        spotRes := this._VerifyStepSpots(hwnd, step)
+                        if !spotRes.ok
+                            return spotRes
+                        return { ok: true, message: "PLAY soft wheel WindowRelative" (spotRes.message != "" ? " · " spotRes.message : "") }
+                    }
+                    clickCount := dbl ? 2 : 1
+                    if UiaCore.SoftClickRelative(hwnd, st["relX"], st["relY"], right, clickCount) {
                         spotRes := this._VerifyStepSpots(hwnd, step)
                         if !spotRes.ok
                             return spotRes
@@ -704,7 +942,7 @@ class DesktopRecord {
                 }
                 return { ok: false, message: "FAIL soft fallback click" }
             }
-            ; Type may proceed with window-only SendText when no UIA target matched
+            ; Type / wheel may proceed with window-only when no UIA target matched
             if actionEarly = "type" {
                 if verifyOnly {
                     spotRes := this._VerifyStepSpots(hwnd, step)
@@ -713,6 +951,15 @@ class DesktopRecord {
                     return { ok: true, message: "VERIFY type window-only (no UIA hit)" (spotRes.message != "" ? " · " spotRes.message : "") }
                 }
                 return this._PlayType(hwnd, step, "", "", hard)
+            }
+            if actionEarly = "wheel" {
+                if verifyOnly {
+                    spotRes := this._VerifyStepSpots(hwnd, step)
+                    if !spotRes.ok
+                        return spotRes
+                    return { ok: true, message: "VERIFY wheel window-only (no UIA hit)" (spotRes.message != "" ? " · " spotRes.message : "") }
+                }
+                return this._PlayWheel(hwnd, step, "", "", hard)
             }
             return { ok: false, message: "FAIL no ranked UIA target matched (list exhausted)" }
         }
@@ -728,10 +975,17 @@ class DesktopRecord {
         if action = "type" {
             return this._PlayType(hwnd, step, resolved, used, hard)
         }
+        if action = "wheel" {
+            return this._PlayWheel(hwnd, step, resolved, used, hard)
+        }
         if action = "rightclick" {
             ; Prefer clickable/bounds right-click (Invoke is left-default)
             if !UiaCore.InvokeRightClick(resolved.el) {
                 return { ok: false, message: "FAIL right-click via " used }
+            }
+        } else if action = "dblclick" {
+            if !UiaCore.InvokeDoubleClick(resolved.el) {
+                return { ok: false, message: "FAIL dblclick via " used }
             }
         } else if !UiaCore.InvokeClick(resolved.el) {
             return { ok: false, message: "FAIL invoke/click via " used }
@@ -788,6 +1042,53 @@ class DesktopRecord {
             settle := 0
         Sleep(settle)
         baseMsg := "PLAY type ok via " how
+        spotRes := this._VerifyStepSpots(hwnd, step)
+        if !spotRes.ok
+            return spotRes
+        if spotRes.message != ""
+            baseMsg .= " · " spotRes.message
+        return { ok: true, message: baseMsg }
+    }
+
+    _StepNotches(step) {
+        if !(step is Map)
+            return 0
+        if step.Has("notches")
+            return Integer(step["notches"])
+        if step.Has("delta")
+            return Integer(step["delta"]) // DesktopRecord.WheelDeltaPerNotch
+        return 0
+    }
+
+    ; Wheel playback: activate hard-keys, move to target when possible, then WheelUp/Down.
+    _PlayWheel(hwnd, step, resolved, used, hard) {
+        notches := this._StepNotches(step)
+        if notches = 0
+            return { ok: false, message: "FAIL wheel notches=0" }
+        el := IsObject(resolved) && IsObject(resolved.el) ? resolved.el : ""
+        how := used != "" ? used : "window"
+        try WinActivate("ahk_id " hwnd)
+        if IsObject(el) {
+            UiaCore.MoveToElement(el)
+            Sleep(20)
+            how := used " + Wheel"
+        } else {
+            ; Fall back: screen coords from recording if present
+            if step.Has("screen") && step["screen"] is Map {
+                sx := step["screen"].Has("x") ? Integer(step["screen"]["x"]) : ""
+                sy := step["screen"].Has("y") ? Integer(step["screen"]["y"]) : ""
+                if sx != "" && sy != ""
+                    MouseMove(sx, sy, 0)
+            }
+            how := "Wheel (no UIA el)"
+        }
+        if !UiaCore.WheelAtCursor(notches)
+            return { ok: false, message: "FAIL wheel via " how }
+        settle := step.Has("settleMs") ? Integer(step["settleMs"]) : 80
+        if settle < 0
+            settle := 0
+        Sleep(settle)
+        baseMsg := "PLAY wheel ok via " how " notches=" notches
         spotRes := this._VerifyStepSpots(hwnd, step)
         if !spotRes.ok
             return spotRes
@@ -919,6 +1220,12 @@ class DesktopRecord {
         cb := this.onStep
         if cb
             cb.Call(step)
+    }
+
+    _EmitPlayIndex(index) {
+        cb := this.onPlayIndex
+        if cb
+            cb.Call(index)
     }
 
     _Status(msg, tone := "") {
