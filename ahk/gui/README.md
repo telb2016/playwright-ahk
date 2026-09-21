@@ -69,8 +69,8 @@ Do **not** run GUI shells from `ahk\gui\` alone — working directory is always 
 - **Run** executes from **repo root**; multi-line stops on first nonzero exit.
 - **Cancel run** aborts the in-flight puzzle job.
 - Empty canvas / incomplete slots (e.g. `--grep=` with no value) **block Run**.
-- Helpers: Clear · Backspace (last piece) · Copy command · Save canvas · live terminal mirror.
-- `F5` Run · `Delete` Backspace piece (Tab 2).
+- Helpers: Clear · Default · Backspace · Copy · Save · live terminal mirror.
+- `F5` Run · `Delete` Backspace · `Ctrl+S` save all (Tab-focused) · autosave every 60s.
 
 Default first drop: piece flagged `defaultFirstDrop` → `test --project=chromium` (skipped when a saved canvas is restored from ini).
 
@@ -108,7 +108,7 @@ scripts/puzzle-pieces.json     ← Tab 2 catalog (repo root)
 - **Ini persistence** — canvas + last terminal snippet (+ prompt, active tab, window size + position).
 - **Run elapsed** — status bar shows live seconds while Copilot / puzzle jobs run.
 - **InvestorDemo** — `Ctrl+Alt+0` launches overnight GUI.
-- Save canvas button; backspace works on ini-restored canvas text.
+- Save / Default canvas buttons; dark confirm dialogs; Ctrl+S + 60s autosave; backspace on ini-restored text.
 
 ### Earlier (PR #3 — merged)
 - **Train wipe** — custom tabs + animated train banner on Tab1↔Tab2 (no raw Tab3 blink).

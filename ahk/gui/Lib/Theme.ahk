@@ -95,4 +95,39 @@ class Theme {
         else
             Theme.StyleEdit(ctrl)
     }
+
+    ; Dark Yes/No confirm. Returns true if Yes. Default focus = No (safer).
+    static ConfirmDark(message, title := "Playwright AHK", ownerHwnd := 0) {
+        result := false
+        done := false
+        opts := "+AlwaysOnTop -MinimizeBox -MaximizeBox +MinSize360x140"
+        if ownerHwnd
+            opts .= " +Owner" ownerHwnd
+        g := Gui(opts, title)
+        Theme.StyleGui(g)
+        g.MarginX := 16
+        g.MarginY := 14
+        g.Add("Text", "w340 c" Theme.Fg, message)
+        btnYes := g.Add("Button", "xm w100 h30", "Yes")
+        Theme.StyleButton(btnYes, true)
+        btnNo := g.Add("Button", "x+12 w100 h30 Default", "No")
+        Theme.StyleButton(btnNo)
+        Finish(yes) {
+            if done
+                return
+            done := true
+            result := yes
+            g.Destroy()
+        }
+        btnYes.OnEvent("Click", (*) => Finish(true))
+        btnNo.OnEvent("Click", (*) => Finish(false))
+        g.OnEvent("Close", (*) => Finish(false))
+        g.OnEvent("Escape", (*) => Finish(false))
+        hwnd := g.Hwnd
+        Theme.ApplyDarkTitleBar(hwnd)
+        g.Show("w380")
+        try btnNo.Focus()
+        WinWaitClose("ahk_id " hwnd)
+        return result
+    }
 }

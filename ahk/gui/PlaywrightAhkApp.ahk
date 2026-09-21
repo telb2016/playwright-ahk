@@ -150,7 +150,7 @@ BuildGui() {
     BtnTab2.OnEvent("Click", (*) => RequestTab(2))
 
     AppGui.Add("Text", "x490 y18 w470 c" Theme.FgDim,
-        "Drag chips → canvas · Ctrl+Alt+P tray · Ctrl+Enter Send · F5 Run")
+        "Drag chips → canvas · Ctrl+Alt+P tray · Ctrl+S save · Ctrl+Enter Send · F5 Run")
 
     ; ----- Tab 1 content -----
     t1Hint := AppGui.Add("Text", "x24 y56 w900 c" Theme.FgDim,
@@ -240,9 +240,13 @@ BuildGui() {
     Theme.StyleButton(BtnCopy)
     BtnCopy.OnEvent("Click", OnPuzzleCopy)
 
-    BtnSaveCanvas := AppGui.Add("Button", "x740 y" (by + 150) " w200 h28", "Save canvas")
+    BtnSaveCanvas := AppGui.Add("Button", "x740 y" (by + 150) " w96 h28", "Save")
     Theme.StyleButton(BtnSaveCanvas)
     BtnSaveCanvas.OnEvent("Click", OnSaveCanvas)
+
+    BtnSeed := AppGui.Add("Button", "x844 y" (by + 150) " w96 h28", "Default")
+    Theme.StyleButton(BtnSeed)
+    BtnSeed.OnEvent("Click", OnPuzzleSeedDefault)
 
     termTop := by + 186
     t2TermLbl := AppGui.Add("Text", "x24 y" termTop " w400", "Terminal mirror (live · persisted)")
@@ -274,7 +278,11 @@ BuildGui() {
     Hotkey("F5", OnPuzzleRun)
     Hotkey("Delete", OnPuzzleBackspace)
     Hotkey("Esc", OnEscDragOrFocus)
+    Hotkey("^s", OnSaveAllHotkey)
     HotIf()
+
+    ; Autosave prompt/canvas/terminal every 60s while running
+    SetTimer(SaveIniAll, 60000)
 }
 
 ; ---------- Tab train wipe ----------
@@ -452,6 +460,27 @@ OnSaveCanvas(*) {
     SetStatus("Canvas + terminal saved to ini")
 }
 
+OnSaveAllHotkey(*) {
+    SaveIniAll()
+    SetStatus("Saved (Ctrl+S) — prompt, canvas, terminal, window")
+}
+
+OnPuzzleSeedDefault(*) {
+    global Canvas, EdCanvas, ActiveTab, AppGui
+    if ActiveTab != 2 {
+        RequestTab(2)
+        return
+    }
+    if Trim(EdCanvas.Value) != "" {
+        if !Theme.ConfirmDark("Replace canvas with default test --project=chromium?", "Reset canvas", AppGui.Hwnd)
+            return
+    }
+    Canvas.SeedDefault()
+    RefreshCanvasEdit()
+    SaveIniAll()
+    SetStatus("Canvas reset to defaultFirstDrop")
+}
+
 OnCopilotSend(*) {
     global EdPrompt, EdReply, RepoRoot, BusyCopilot, CopilotJob, BtnSend, BtnCancelCopilot, ActiveTab, JobStartCopilot
 
@@ -581,7 +610,11 @@ ChipDragCanStart() {
 }
 
 OnPuzzleClear(*) {
-    global Canvas, EdCanvas
+    global Canvas, EdCanvas, AppGui
+    if Trim(EdCanvas.Value) != "" {
+        if !Theme.ConfirmDark("Clear the command canvas?", "Clear canvas", AppGui.Hwnd)
+            return
+    }
     Canvas.Clear()
     EdCanvas.Value := ""
     RefreshCanvasEdit()
