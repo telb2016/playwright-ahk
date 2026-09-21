@@ -246,20 +246,33 @@ class ScreenSpots {
 
         passed := 0
         total := recorded.Length
+        failedIdx := []
         for i, rec in recorded {
             if !(rec is Map) || !rec.Has("rx")
                 continue
             ; Prefer matching by rx/ry rather than index (stable)
             liveSpot := ScreenSpots.FindLiveSpot(live, rec["rx"], rec["ry"])
-            if liveSpot = ""
+            if liveSpot = "" {
+                failedIdx.Push(i)
                 continue
+            }
             if ScreenSpots.RgbWithin(rec["rgb"], liveSpot["rgb"], delta)
                 passed += 1
+            else
+                failedIdx.Push(i)
         }
         need := Max(1, Ceil(total * passRatio))
         if passed >= need
             return { ok: true, message: "spots OK " passed "/" total " (±" delta " RGB, need " need ")", passed: passed, total: total, soft: false }
-        return { ok: false, message: "FAIL spots " passed "/" total " (need " need " within ±" delta " RGB)", passed: passed, total: total, soft: false }
+        failList := ""
+        for j, fi in failedIdx {
+            if j > 4
+                break
+            failList .= (j > 1 ? "," : "") fi
+        }
+        if failedIdx.Length > 4
+            failList .= "…"
+        return { ok: false, message: "FAIL spots " passed "/" total " (need " need " ±" delta "; bad#" failList ")", passed: passed, total: total, soft: false }
     }
 
     static FindLiveSpot(live, rx, ry) {

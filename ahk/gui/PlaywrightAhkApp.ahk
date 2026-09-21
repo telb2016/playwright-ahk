@@ -129,8 +129,8 @@ OnTrayHelp(*) {
     global AppGui
     msg := "Ctrl+Alt+P tray · Ctrl+1/2/3 tabs · Ctrl+Enter Send · F5 puzzle Run`n"
         . "Ctrl+S save · Ctrl+Z undo canvas · Ctrl+L clear filter · Ctrl+R reload latest`n"
-        . "Ctrl+Shift+C/T copy cmd/terminal · Delete backspace · Esc cancel drag/desktop record`n"
-        . "Tab3 = Windows Desktop UIA (NOT Playwright). Close/minimize → tray."
+        . "Ctrl+Shift+C/T copy cmd/terminal · Ctrl+Shift+J copy desktop JSON · Esc cancel`n"
+        . "Tab3 = Windows Desktop UIA + Strict spots (NOT Playwright). Close/minimize → tray."
     ; One-button dark info
     Theme.InfoDark(msg, "Hotkeys / help", AppGui.Hwnd)
 }
@@ -584,6 +584,7 @@ BuildGui() {
     Hotkey("^z", OnCanvasUndo)
     Hotkey("F6", OnFocusChipFilter)
     Hotkey("F7", OnFocusCanvas)
+    Hotkey("^+j", OnDesktopCopyJson)
     HotIf()
 
     ; Autosave prompt/canvas/terminal every 60s while running
@@ -1805,6 +1806,18 @@ OnDesktopSave(*) {
     path := Desktop.Save(RepoRoot)
     if path != ""
         try TrayTip("Desktop UIA", "Saved`n" path, "Iconi")
+}
+
+OnDesktopCopyJson(*) {
+    global EdDesktopJson, ActiveTab, Desktop
+    if ActiveTab != 3
+        RequestTab(3)
+    try {
+        if Trim(EdDesktopJson.Value) = "" && Desktop.Count()
+            EdDesktopJson.Value := Desktop.ToJson()
+        A_Clipboard := EdDesktopJson.Value
+        SetStatus("Desktop UIA JSON copied (Ctrl+Shift+J)", "ok")
+    }
 }
 
 OnDesktopOpenFolder(*) {
