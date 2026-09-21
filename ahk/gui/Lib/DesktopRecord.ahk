@@ -1345,6 +1345,27 @@ class DesktopRecord {
         return this.steps.Length
     }
 
+    ; Deep-ish copy of a step Map (JSON round-trip). Works for all action types.
+    static CloneStep(step) {
+        if !(step is Map)
+            return Map()
+        try
+            return Json.Parse(Json.Stringify(step))
+        catch
+            return Map()
+    }
+
+    ; Duplicate step at 1-based index; insert copy immediately after. Returns new index or 0.
+    DuplicateStep(index) {
+        if index < 1 || index > this.steps.Length
+            return 0
+        clone := DesktopRecord.CloneStep(this.steps[index])
+        if !(clone is Map) || !clone.Has("action")
+            return 0
+        this.steps.InsertAt(index + 1, clone)
+        return index + 1
+    }
+
     ; Play all steps. Returns {ok, failedAt, message, log}
     Play(verifyOnly := false) {
         if this.recording {

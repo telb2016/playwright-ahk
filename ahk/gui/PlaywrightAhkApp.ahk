@@ -35,7 +35,7 @@ global AppVisible, HidingToTray
 global ChipBtns, EdChipFilter, LblNoChipMatch
 global JobStartCopilot, JobStartPuzzle
 
-global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr, ChkStrictSpots, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown, BtnStepWait
+global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr, ChkStrictSpots, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown, BtnStepDup, BtnStepWait
 global BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskSend, BtnDeskClear
 global BusyDesktop
 
@@ -262,7 +262,7 @@ BuildGui() {
     global EdCanvas, EdTerminal, BtnRun, BtnCancelPuzzle
     global Catalog, Tab1Ctrls, Tab2Ctrls, Tab3Ctrls, ChipBtns, EdChipFilter, LblNoChipMatch
     global BtnTab1, BtnTab2, BtnTab3, WipeGui, WipeLbl
-    global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown, BtnStepWait
+    global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown, BtnStepDup, BtnStepWait
     global BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskOpenDir, BtnDeskLoad, BtnDeskSend, BtnDeskClear, BtnDeskProbe
 
     AppGui := Gui("+Resize +MinSize1000x640", "Playwright AHK — Overnight GUI")
@@ -493,16 +493,19 @@ BuildGui() {
     try LbDesktopSteps.SetFont("s9 c" Theme.Fg, "Consolas")
     LbDesktopSteps.OnEvent("DoubleClick", OnDesktopStepDelete)
 
-    BtnStepDel := AppGui.Add("Button", "x24 y384 w58 h26", "Delete")
+    BtnStepDel := AppGui.Add("Button", "x24 y384 w50 h26", "Delete")
     Theme.StyleButton(BtnStepDel)
     BtnStepDel.OnEvent("Click", OnDesktopStepDelete)
-    BtnStepUp := AppGui.Add("Button", "x86 y384 w48 h26", "Up")
+    BtnStepUp := AppGui.Add("Button", "x78 y384 w36 h26", "Up")
     Theme.StyleButton(BtnStepUp)
     BtnStepUp.OnEvent("Click", OnDesktopStepUp)
-    BtnStepDown := AppGui.Add("Button", "x138 y384 w52 h26", "Down")
+    BtnStepDown := AppGui.Add("Button", "x118 y384 w44 h26", "Down")
     Theme.StyleButton(BtnStepDown)
     BtnStepDown.OnEvent("Click", OnDesktopStepDown)
-    BtnStepWait := AppGui.Add("Button", "x194 y384 w80 h26", "Wait")
+    BtnStepDup := AppGui.Add("Button", "x166 y384 w40 h26", "Dup")
+    Theme.StyleButton(BtnStepDup)
+    BtnStepDup.OnEvent("Click", OnDesktopStepDup)
+    BtnStepWait := AppGui.Add("Button", "x210 y384 w60 h26", "Wait")
     Theme.StyleButton(BtnStepWait)
     BtnStepWait.OnEvent("Click", OnDesktopStepWait)
 
@@ -552,7 +555,7 @@ BuildGui() {
     EdDesktopLog := AppGui.Add("Edit", "x24 y440 w700 h160 Multi ReadOnly VScroll", "")
     Theme.StyleEdit(EdDesktopLog)
 
-    Tab3Ctrls := [t3Banner, t3Hint, ChkStrictSpots, t3ListLbl, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown, BtnStepWait
+    Tab3Ctrls := [t3Banner, t3Hint, ChkStrictSpots, t3ListLbl, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown, BtnStepDup, BtnStepWait
         , t3StepsLbl, EdDesktopJson
         , BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskOpenDir, BtnDeskLoad, BtnDeskClear, BtnDeskProbe
         , t3InstrLbl, EdDesktopInstr, BtnDeskSend, t3LogLbl, EdDesktopLog]
@@ -763,7 +766,7 @@ OnResize(thisGui, minMax, width, height) {
     global EdRecording, EdRecordUrl, EdRecordInstr, BtnRecord, BtnSendRecording
     global BtnSaveAsTest, BtnRunSavedTest, LblRecording
     global BtnReloadLatest, BtnCopyRec, BtnOpenRec, BtnCancelRecord
-    global EdDesktopJson, EdDesktopLog, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown, BtnStepWait
+    global EdDesktopJson, EdDesktopLog, LbDesktopSteps, BtnStepDel, BtnStepUp, BtnStepDown, BtnStepDup, BtnStepWait
     if minMax = -1 {
         ; Minimize → tray (same as Close)
         HideToTray()
@@ -801,10 +804,11 @@ OnResize(thisGui, minMax, width, height) {
             if jsonW < 280
                 jsonW := Max(contentW - 480, 200)
             try LbDesktopSteps.Move(24, 128, 250, Max(height - 470, 180))
-            try BtnStepDel.Move(24, Max(height - 336, 384), 58, 26)
-            try BtnStepUp.Move(86, Max(height - 336, 384), 48, 26)
-            try BtnStepDown.Move(138, Max(height - 336, 384), 52, 26)
-            try BtnStepWait.Move(194, Max(height - 336, 384), 80, 26)
+            try BtnStepDel.Move(24, Max(height - 336, 384), 50, 26)
+            try BtnStepUp.Move(78, Max(height - 336, 384), 36, 26)
+            try BtnStepDown.Move(118, Max(height - 336, 384), 44, 26)
+            try BtnStepDup.Move(166, Max(height - 336, 384), 40, 26)
+            try BtnStepWait.Move(210, Max(height - 336, 384), 60, 26)
             try EdDesktopJson.Move(286, 128, jsonW, Max(height - 420, 180))
             try EdDesktopLog.Move(24, , Min(contentW - 220, 700), )
         }
@@ -2048,6 +2052,31 @@ OnDesktopStepDown(*) {
     try LbDesktopSteps.Choose(sel + 1)
     SaveIniAll()
     SetStatus("Moved step #" sel " down", "ok")
+}
+
+OnDesktopStepDup(*) {
+    global Desktop, EdDesktopJson, LbDesktopSteps
+    if Desktop.recording {
+        SetStatus("Stop recording before editing steps", "err")
+        return
+    }
+    SyncDesktopFromJsonOrList()
+    sel := 0
+    try sel := Integer(LbDesktopSteps.Value)
+    if sel < 1 || sel > Desktop.steps.Length {
+        SetStatus("Select a step to duplicate", "err")
+        return
+    }
+    newIdx := Desktop.DuplicateStep(sel)
+    if newIdx < 1 {
+        SetStatus("Duplicate failed", "err")
+        return
+    }
+    EdDesktopJson.Value := Desktop.ToJson()
+    RefreshDesktopStepList()
+    try LbDesktopSteps.Choose(newIdx)
+    SaveIniAll()
+    SetStatus("Duplicated step #" sel " → #" newIdx, "ok")
 }
 
 OnDesktopStepWait(*) {
