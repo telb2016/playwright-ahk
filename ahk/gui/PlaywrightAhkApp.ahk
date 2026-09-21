@@ -12,6 +12,7 @@ Persistent
 #Include Lib\SlotEditor.ahk
 #Include Lib\ChipDrag.ahk
 #Include Lib\RecordSession.ahk
+#Include Lib\DesktopRecord.ahk
 #Include ..\Playwright.ahk
 
 global AppGui, StatusBar
@@ -26,13 +27,17 @@ global Catalog, Canvas
 global CopilotJob, PuzzleJob
 global IniPath
 global BusyCopilot, BusyPuzzle
-global ActiveTab, BtnTab1, BtnTab2
-global Tab1Ctrls, Tab2Ctrls
+global ActiveTab, BtnTab1, BtnTab2, BtnTab3
+global Tab1Ctrls, Tab2Ctrls, Tab3Ctrls
 global WipeGui, WipeLbl, WipeActive, WipeDir, WipeStep, WipeTarget
 global LastWinW, LastWinH, LastWinX, LastWinY
 global AppVisible, HidingToTray
 global ChipBtns, EdChipFilter, LblNoChipMatch
 global JobStartCopilot, JobStartPuzzle
+
+global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr
+global BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskSend, BtnDeskClear
+global BusyDesktop
 
 CopilotJob := ""
 PuzzleJob := ""
@@ -41,6 +46,7 @@ BusyPuzzle := false
 ActiveTab := 1
 Tab1Ctrls := []
 Tab2Ctrls := []
+Tab3Ctrls := []
 WipeActive := false
 WipeDir := 1
 WipeStep := 0
@@ -57,17 +63,23 @@ JobStartPuzzle := 0
 RecordJob := ""
 BusyRecord := false
 LastSavedSpec := ""
+BusyDesktop := false
+Desktop := ""
 
 RepoRoot := ShellExec.ResolveRepoRoot(A_ScriptFullPath)
 try RecordSession.EnsureDirs(RepoRoot)
 IniPath := A_ScriptDir "\PlaywrightAhkApp.ini"
 Catalog := PuzzlePieces.Load(RepoRoot)
 Canvas := PuzzleCanvas(Catalog)
+Desktop := DesktopRecord(RepoRoot)
 
 SetupTray()
 BuildGui()
 Theme.ApplyDarkTitleBar(AppGui.Hwnd)
 ChipDrag.SetOwner(AppGui.Hwnd)
+
+Desktop.onStatus := DesktopStatusCb
+Desktop.onStep := OnDesktopStepCaptured
 SlotEditor.SetIniPath(IniPath)
 LoadIniAll()
 if Trim(EdCanvas.Value) = "" {
@@ -96,6 +108,7 @@ SetupTray() {
     A_TrayMenu.Add()
     A_TrayMenu.Add("Copilot studio`tCtrl+1", (*) => (ShowAndFocus(), RequestTab(1)))
     A_TrayMenu.Add("CLI puzzle`tCtrl+2", (*) => (ShowAndFocus(), RequestTab(2)))
+    A_TrayMenu.Add("Desktop UIA`tCtrl+3", (*) => (ShowAndFocus(), RequestTab(3)))
     A_TrayMenu.Add()
     A_TrayMenu.Add("Save now`tCtrl+S", (*) => (SaveIniAll(), TrayTip("Saved", "Prompt/canvas/terminal persisted", "Iconi")))
     A_TrayMenu.Add("Cancel busy jobs", OnTrayCancelJobs)
@@ -112,33 +125,36 @@ SetupTray() {
 
 OnTrayHelp(*) {
     global AppGui
-    msg := "Ctrl+Alt+P tray · Ctrl+1/2 tabs · Ctrl+Enter Send · F5 Run`n"
+    msg := "Ctrl+Alt+P tray · Ctrl+1/2/3 tabs · Ctrl+Enter Send · F5 puzzle Run`n"
         . "Ctrl+S save · Ctrl+Z undo canvas · Ctrl+L clear filter · Ctrl+R reload latest`n"
-        . "Ctrl+Shift+C/T copy cmd/terminal · Delete backspace · Esc cancel drag`n"
-        . "Close/minimize → tray · Exit on tray menu · Right-click chip copies argv"
+        . "Ctrl+Shift+C/T copy cmd/terminal · Delete backspace · Esc cancel drag/desktop record`n"
+        . "Tab3 = Windows Desktop UIA (NOT Playwright). Close/minimize → tray."
     ; One-button dark info
     Theme.InfoDark(msg, "Hotkeys / help", AppGui.Hwnd)
 }
 
 OnTrayCancelJobs(*) {
-    global BusyCopilot, BusyPuzzle, BusyRecord
-    any := BusyCopilot || BusyPuzzle || BusyRecord
+    global BusyCopilot, BusyPuzzle, BusyRecord, BusyDesktop
+    any := BusyCopilot || BusyPuzzle || BusyRecord || BusyDesktop
     OnCopilotCancel()
     OnPuzzleCancel()
     OnRecordCancel()
+    try OnDesktopStop()
     UpdateTrayTip()
     TrayTip("Playwright AHK", any ? "Busy jobs cancelled" : "No busy jobs", "Iconi")
 }
 
 UpdateTrayTip() {
-    global BusyCopilot, BusyPuzzle, BusyRecord, AppVisible
+    global BusyCopilot, BusyPuzzle, BusyRecord, BusyDesktop, AppVisible
     bits := []
     if BusyCopilot
         bits.Push("Copilot…")
     if BusyPuzzle
         bits.Push("Puzzle…")
     if BusyRecord
-        bits.Push("Record…")
+        bits.Push("BrowserRec…")
+    if BusyDesktop
+        bits.Push("DesktopUIA…")
     base := "Playwright AHK — Overnight GUI · Ctrl+Alt+P"
     if bits.Length
         A_IconTip := base "`nBusy: " StrJoin(bits, " · ")
@@ -163,6 +179,7 @@ OnTrayExit(*) {
     OnCopilotCancel()
     OnPuzzleCancel()
     OnRecordCancel()
+    try OnDesktopStop()
     ExitApp()
 }
 
@@ -239,8 +256,10 @@ BuildGui() {
     global BtnReloadLatest, BtnCopyRec, BtnOpenRec, BtnCancelRecord
     global RecordJob, BusyRecord, LastSavedSpec
     global EdCanvas, EdTerminal, BtnRun, BtnCancelPuzzle
-    global Catalog, Tab1Ctrls, Tab2Ctrls, ChipBtns, EdChipFilter, LblNoChipMatch
-    global BtnTab1, BtnTab2, WipeGui, WipeLbl
+    global Catalog, Tab1Ctrls, Tab2Ctrls, Tab3Ctrls, ChipBtns, EdChipFilter, LblNoChipMatch
+    global BtnTab1, BtnTab2, BtnTab3, WipeGui, WipeLbl
+    global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr
+    global BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskSend, BtnDeskClear
 
     AppGui := Gui("+Resize +MinSize1000x640", "Playwright AHK — Overnight GUI")
     Theme.StyleGui(AppGui)
@@ -249,16 +268,20 @@ BuildGui() {
     AppGui.OnEvent("Size", OnResize)
 
     ; Custom tab strip (replaces raw Tab3 blink — train wipe on switch)
-    BtnTab1 := AppGui.Add("Button", "x10 y10 w230 h34", "Copilot prompt studio")
+    BtnTab1 := AppGui.Add("Button", "x10 y10 w200 h34", "Copilot studio")
     Theme.StyleTabBtn(BtnTab1, true)
     BtnTab1.OnEvent("Click", (*) => RequestTab(1))
 
-    BtnTab2 := AppGui.Add("Button", "x250 y10 w230 h34", "Playwright CLI puzzle")
+    BtnTab2 := AppGui.Add("Button", "x218 y10 w200 h34", "CLI puzzle")
     Theme.StyleTabBtn(BtnTab2, false)
     BtnTab2.OnEvent("Click", (*) => RequestTab(2))
 
-    AppGui.Add("Text", "x490 y18 w470 c" Theme.FgDim,
-        "Ctrl+1/2 tabs · Ctrl+Alt+P tray · Ctrl+S save · Ctrl+Enter Send · F5 Run")
+    BtnTab3 := AppGui.Add("Button", "x426 y10 w220 h34", "Desktop UIA (Windows)")
+    Theme.StyleTabBtn(BtnTab3, false)
+    BtnTab3.OnEvent("Click", (*) => RequestTab(3))
+
+    AppGui.Add("Text", "x660 y18 w300 c" Theme.FgDim,
+        "Ctrl+1/2/3 · Ctrl+Alt+P tray · Ctrl+S · F5 puzzle")
 
     ; ----- Tab 1 content (left: Copilot · right: Recording) -----
     leftW := 560
@@ -447,6 +470,55 @@ BuildGui() {
     Tab2Ctrls.Push(t2CanvasLbl, EdCanvas, BtnRun, BtnCancelPuzzle, BtnClear, BtnBksp, BtnCopy
         , BtnSaveCanvas, BtnSeed, t2TermLbl, BtnCopyTerm, BtnClearTerm, BtnOpenRepo, EdTerminal)
 
+
+    ; ----- Tab 3 content — Windows desktop UIA (NOT Playwright) -----
+    t3Banner := AppGui.Add("Text", "x24 y56 w920 c" Theme.Err,
+        "WINDOWS DESKTOP UIA RECORDER — AutoHotkey + UI Automation only. Never Playwright / npx / @playwright/test.")
+    try t3Banner.SetFont("s10 Bold c" Theme.Err, "Segoe UI")
+    t3Hint := AppGui.Add("Text", "x24 y80 w920 c" Theme.FgDim,
+        "Record clicks via IUIAutomation (ranked: AutomationId → Name+ControlType → LocalizedType+index). Soft window-relative = last resort only. Hard-fail on wrong process/window class.")
+
+    t3StepsLbl := AppGui.Add("Text", "x24 y108 w500", "Steps JSON (kind: windows-uia)")
+    EdDesktopJson := AppGui.Add("Edit", "x24 y128 w700 h280 Multi WantReturn VScroll", "")
+    Theme.StyleEdit(EdDesktopJson)
+
+    bx := 740
+    BtnDeskRecord := AppGui.Add("Button", "x" bx " y128 w200 h36", "Record")
+    Theme.StyleButton(BtnDeskRecord, true)
+    BtnDeskRecord.OnEvent("Click", OnDesktopRecord)
+    BtnDeskStop := AppGui.Add("Button", "x" bx " y170 w200 h28", "Stop")
+    Theme.StyleButton(BtnDeskStop)
+    BtnDeskStop.Enabled := false
+    BtnDeskStop.OnEvent("Click", OnDesktopStop)
+    BtnDeskPlay := AppGui.Add("Button", "x" bx " y210 w96 h28", "Play")
+    Theme.StyleButton(BtnDeskPlay, true)
+    BtnDeskPlay.OnEvent("Click", OnDesktopPlay)
+    BtnDeskVerify := AppGui.Add("Button", "x" (bx + 104) " y210 w96 h28", "Verify")
+    Theme.StyleButton(BtnDeskVerify)
+    BtnDeskVerify.OnEvent("Click", OnDesktopVerify)
+    BtnDeskSave := AppGui.Add("Button", "x" bx " y248 w200 h28", "Save to recordings/windows")
+    Theme.StyleButton(BtnDeskSave)
+    BtnDeskSave.OnEvent("Click", OnDesktopSave)
+    BtnDeskClear := AppGui.Add("Button", "x" bx " y286 w200 h28", "Clear steps")
+    Theme.StyleButton(BtnDeskClear)
+    BtnDeskClear.OnEvent("Click", OnDesktopClear)
+
+    t3InstrLbl := AppGui.Add("Text", "x" bx " y324 w200", "Copilot instruction")
+    EdDesktopInstr := AppGui.Add("Edit", "x" bx " y344 w200 h60 Multi WantReturn VScroll",
+        "Refactor these UIA steps for stability; keep AutomationId-first targeting.")
+    Theme.StyleEdit(EdDesktopInstr)
+    BtnDeskSend := AppGui.Add("Button", "x" bx " y414 w200 h36", "Send desktop → Copilot")
+    Theme.StyleButton(BtnDeskSend, true)
+    BtnDeskSend.OnEvent("Click", OnDesktopSendToCopilot)
+
+    t3LogLbl := AppGui.Add("Text", "x24 y420 w400", "Play / Verify log (desktop UIA only)")
+    EdDesktopLog := AppGui.Add("Edit", "x24 y440 w700 h160 Multi ReadOnly VScroll", "")
+    Theme.StyleEdit(EdDesktopLog)
+
+    Tab3Ctrls := [t3Banner, t3Hint, t3StepsLbl, EdDesktopJson
+        , BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskClear
+        , t3InstrLbl, EdDesktopInstr, BtnDeskSend, t3LogLbl, EdDesktopLog]
+
     StatusBar := AppGui.Add("Text", "x10 y675 w960 h24 +0x100", " Ready")  ; SS_NOTIFY for click
     Theme.StyleStatus(StatusBar)
     StatusBar.OnEvent("Click", OnStatusBarClick)
@@ -473,6 +545,7 @@ BuildGui() {
     Hotkey("^+t", OnCopyTerminal)
     Hotkey("^1", (*) => RequestTab(1))
     Hotkey("^2", (*) => RequestTab(2))
+    Hotkey("^3", (*) => RequestTab(3))
     Hotkey("^l", OnClearChipFilter)
     Hotkey("^r", OnReloadLatestSpec)
     Hotkey("^z", OnCanvasUndo)
@@ -495,20 +568,25 @@ RequestTab(n) {
 
 StartTrainWipe(target) {
     global ActiveTab, WipeActive, WipeDir, WipeStep, WipeTarget
-    global WipeGui, WipeLbl, AppGui, LastWinW, LastWinH, BtnTab1, BtnTab2
+    global WipeGui, WipeLbl, AppGui, LastWinW, LastWinH, BtnTab1, BtnTab2, BtnTab3
 
     ChipDrag.Cancel()
+    try OnDesktopStop()
     WipeTarget := target
     WipeDir := (target > ActiveTab) ? 1 : -1
     WipeStep := 0
     WipeActive := true
 
-    label := target = 1
-        ? "◀══════  COPILOT PROMPT STUDIO  ══════◀"
-        : "══════▶  PLAYWRIGHT CLI PUZZLE  ▶══════"
+    if target = 1
+        label := "◀══════  COPILOT PROMPT STUDIO  ══════◀"
+    else if target = 2
+        label := "══════▶  PLAYWRIGHT CLI PUZZLE  ▶══════"
+    else
+        label := "══════▶  WINDOWS DESKTOP UIA  ▶══════"
     WipeLbl.Value := label
     Theme.StyleTabBtn(BtnTab1, target = 1)
     Theme.StyleTabBtn(BtnTab2, target = 2)
+    Theme.StyleTabBtn(BtnTab3, target = 3)
 
     ; Cover content area below tab strip
     w := Max(LastWinW - 20, 800)
@@ -556,12 +634,12 @@ AnimateTrainWipe() {
         try WipeGui.Hide()
         ShowTab(WipeTarget, true)
         SaveIniAll()
-        SetStatus(WipeTarget = 1 ? "Copilot prompt studio" : "Playwright CLI puzzle")
+        SetStatus(WipeTarget = 1 ? "Copilot prompt studio" : (WipeTarget = 2 ? "Playwright CLI puzzle" : "Desktop UIA (Windows)"))
     }
 }
 
 ShowTab(n, updateButtons := true) {
-    global ActiveTab, Tab1Ctrls, Tab2Ctrls, BtnTab1, BtnTab2
+    global ActiveTab, Tab1Ctrls, Tab2Ctrls, Tab3Ctrls, BtnTab1, BtnTab2, BtnTab3
 
     ActiveTab := n
     for c in Tab1Ctrls {
@@ -580,9 +658,18 @@ ShowTab(n, updateButtons := true) {
                 c.Visible := false
         }
     }
+    for c in Tab3Ctrls {
+        try {
+            if n = 3
+                c.Visible := true
+            else
+                c.Visible := false
+        }
+    }
     if updateButtons {
         Theme.StyleTabBtn(BtnTab1, n = 1)
         Theme.StyleTabBtn(BtnTab2, n = 2)
+        Theme.StyleTabBtn(BtnTab3, n = 3)
     }
     ; Re-apply chip filter after bulk Visible toggles
     if n = 2
@@ -620,6 +707,7 @@ OnResize(thisGui, minMax, width, height) {
     global EdRecording, EdRecordUrl, EdRecordInstr, BtnRecord, BtnSendRecording
     global BtnSaveAsTest, BtnRunSavedTest, LblRecording
     global BtnReloadLatest, BtnCopyRec, BtnOpenRec, BtnCancelRecord
+    global EdDesktopJson, EdDesktopLog
     if minMax = -1 {
         ; Minimize → tray (same as Close)
         HideToTray()
@@ -653,6 +741,8 @@ OnResize(thisGui, minMax, width, height) {
             try BtnOpenRec.Move(rightX + 2 * rightW // 3, instrY + 160, rightW // 3, 26)
             EdCanvas.Move(24, , Min(contentW - 220, 700), )
             EdTerminal.Move(24, , contentW, )
+            try EdDesktopJson.Move(24, 128, Min(contentW - 220, 700), Max(height - 420, 180))
+            try EdDesktopLog.Move(24, , Min(contentW - 220, 700), )
         }
         ApplyChrome(width, height)
     }
@@ -1110,7 +1200,7 @@ LoadIniAll() {
     }
     try {
         tab := Integer(IniRead(IniPath, "UI", "ActiveTab", "1"))
-        if tab = 1 || tab = 2
+        if tab = 1 || tab = 2 || tab = 3
             ActiveTab := tab
     }
     try {
@@ -1516,6 +1606,127 @@ ScrollEditToEnd(ctrl) {
         SendMessage(0xB7, 0, 0, ctrl)
     }
 }
+
+
+; ---------- Tab 3 — Windows Desktop UIA (NOT Playwright) ----------
+
+DesktopStatusCb(msg, tone := "") {
+    SetStatus(msg, tone)
+}
+
+OnDesktopStepCaptured(step) {
+    global Desktop, EdDesktopJson
+    try EdDesktopJson.Value := Desktop.ToJson()
+}
+
+OnDesktopRecord(*) {
+    global Desktop, ActiveTab, BtnDeskRecord, BtnDeskStop, BusyDesktop, WipeActive, BusyRecord, BusyPuzzle
+    if WipeActive
+        return
+    if ActiveTab != 3
+        RequestTab(3)
+    if BusyRecord {
+        SetStatus("Browser Record busy — finish Tab1 codegen first", "err")
+        return
+    }
+    if !Desktop.StartRecord()
+        return
+    BusyDesktop := true
+    try BtnDeskRecord.Enabled := false
+    try BtnDeskStop.Enabled := true
+    UpdateTrayTip()
+}
+
+OnDesktopStop(*) {
+    global Desktop, BtnDeskRecord, BtnDeskStop, BusyDesktop, EdDesktopJson
+    Desktop.StopRecord()
+    BusyDesktop := false
+    try BtnDeskRecord.Enabled := true
+    try BtnDeskStop.Enabled := false
+    try EdDesktopJson.Value := Desktop.ToJson()
+    UpdateTrayTip()
+    SaveIniAll()
+}
+
+OnDesktopPlay(*) {
+    global Desktop, EdDesktopJson, EdDesktopLog, ActiveTab, BusyDesktop
+    if ActiveTab != 3
+        RequestTab(3)
+    if BusyDesktop || Desktop.recording {
+        SetStatus("Stop desktop recording before Play", "err")
+        return
+    }
+    if !Desktop.LoadFromEdit(EdDesktopJson.Value)
+        return
+    res := Desktop.Play(false)
+    EdDesktopLog.Value := res.log
+    ScrollEditToEnd(EdDesktopLog)
+}
+
+OnDesktopVerify(*) {
+    global Desktop, EdDesktopJson, EdDesktopLog, ActiveTab, BusyDesktop
+    if ActiveTab != 3
+        RequestTab(3)
+    if BusyDesktop || Desktop.recording {
+        SetStatus("Stop desktop recording before Verify", "err")
+        return
+    }
+    if !Desktop.LoadFromEdit(EdDesktopJson.Value)
+        return
+    res := Desktop.Verify()
+    EdDesktopLog.Value := res.log
+    ScrollEditToEnd(EdDesktopLog)
+}
+
+OnDesktopSave(*) {
+    global Desktop, EdDesktopJson, RepoRoot
+    if Trim(EdDesktopJson.Value) != ""
+        Desktop.LoadFromEdit(EdDesktopJson.Value)
+    path := Desktop.Save(RepoRoot)
+    if path != ""
+        try TrayTip("Desktop UIA", "Saved`n" path, "Iconi")
+}
+
+OnDesktopClear(*) {
+    global Desktop, EdDesktopJson, EdDesktopLog, AppGui
+    if Desktop.Count() || Trim(EdDesktopJson.Value) != "" {
+        if !Theme.ConfirmDark("Clear all desktop UIA steps?", "Clear desktop steps", AppGui.Hwnd)
+            return
+    }
+    Desktop.Clear()
+    EdDesktopJson.Value := ""
+    EdDesktopLog.Value := ""
+    SaveIniAll()
+    SetStatus("Desktop steps cleared", "ok")
+}
+
+OnDesktopSendToCopilot(*) {
+    global Desktop, EdDesktopJson, EdDesktopInstr, EdPrompt, ActiveTab, BusyCopilot, BusyDesktop
+    ; Boundary: desktop → Copilot only. NEVER Playwright seed / Save as test path.
+    if BusyDesktop || Desktop.recording {
+        SetStatus("Stop desktop recording before Send", "err")
+        return
+    }
+    if BusyCopilot {
+        SetStatus("Copilot already running…", "err")
+        return
+    }
+    if Trim(EdDesktopJson.Value) != "" {
+        if !Desktop.LoadFromEdit(EdDesktopJson.Value)
+            return
+    }
+    if Desktop.Count() = 0 {
+        SetStatus("No desktop UIA steps to send", "err")
+        return
+    }
+    prompt := Desktop.BuildCopilotPrompt(EdDesktopInstr.Value)
+    EdPrompt.Value := prompt
+    ShowTab(1, true)
+    SaveIniAll()
+    SetStatus("Desktop UIA prompt loaded (AHK seed — not Playwright) — sending…", "ok")
+    OnCopilotSend()
+}
+
 
 SetStatus(msg, tone := "") {
     global StatusBar

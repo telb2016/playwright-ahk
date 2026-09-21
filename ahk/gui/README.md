@@ -88,6 +88,22 @@ Do **not** run GUI shells from `ahk\gui\` alone — working directory is always 
 
 Default first drop: piece flagged `defaultFirstDrop` → `test --project=chromium` (skipped when a saved canvas is restored from ini).
 
+## Tab 3 — Windows desktop UIA (NOT Playwright)
+
+Bulletproof **AutoHotkey + UI Automation** recorder for the Windows machine itself.
+
+- **Record** — clicks captured via `IUIAutomation` (`UiaCore.ahk`). Each step stores a **ranked target list**:
+  1. `AutomationId`
+  2. `Name` + `ControlType`
+  3. `LocalizedControlType` + index among siblings
+  Soft **window-relative** click is rank 99 last-resort only (never primary verifier).
+- **Play / Verify** — resolve window by **process name + window class** (hard-fail if wrong). Try ranked targets in order with short wait-for-condition; one miss does **not** fail until the list is exhausted.
+- **Save** — `recordings/windows/desktop-*.json` (+ `.ahk` stub). Gitignored payloads; folder kept.
+- **Send desktop → Copilot** — seeds *AutoHotkey + UI Automation* — **never** `@playwright/test`. Separate from Tab 1 browser Record pane.
+- **Boundary** — Tab 3 never pipes into `npx playwright` / codegen / Save as test.
+
+Controls: **Record · Stop · Play · Verify · Save · Clear · Send desktop → Copilot**. Hotkey `Ctrl+3`.
+
 ## UX polish
 
 - **Text-train tab transition** — custom tab strip (not raw Tab3 blink); sliding train wipe banner when swapping Copilot ↔ puzzle.
@@ -109,6 +125,8 @@ ahk/gui/Lib/PuzzlePieces.ahk
 ahk/gui/Lib/SlotEditor.ahk     ← dark slot dialog
 ahk/gui/Lib/ChipDrag.ahk       ← chip→canvas DnD
 ahk/gui/Lib/RecordSession.ahk  ← headed codegen → latest.spec.js → Copilot
+ahk/gui/Lib/UiaCore.ahk         ← IUIAutomation helpers (Tab 3)
+ahk/gui/Lib/DesktopRecord.ahk   ← Windows desktop UIA record/play/verify
 ahk/InvestorDemo.ahk
 ahk/Playwright.ahk             ← hardened wrappers (#Include)
 scripts/puzzle-pieces.json     ← Tab 2 catalog (repo root)
@@ -117,6 +135,7 @@ scripts/puzzle-pieces.json     ← Tab 2 catalog (repo root)
 ## CHANGELOG (overnight polish)
 
 ### PR #6 — `ahk/overnight-polish-2`
+- **Tab 3 — Windows Desktop UIA** — Record/Stop/Play/Verify/Save; ranked targets; hard-fail wrong process/class; Copilot seed is AHK+UIA never Playwright; saves under `recordings/windows/`.
 - **Tab2 visibility fix** — Default / Copy term / Clear term / Open repo / Filter label hidden on Tab 1.
 - **ChipDrag harden** — cancel on focus loss / tab wipe / tray hide; tooltip debounce; longer click suppress for SlotEditor; ghost label truncate; `SetOwner`.
 - **SlotEditor** — remember last OK values (session + `SlotMemory` ini); center on owner; light URL validation.
@@ -166,10 +185,12 @@ scripts/puzzle-pieces.json     ← Tab 2 catalog (repo root)
 | Record | Url / Instruction | Codegen start URL + Copilot instruction |
 | Record | LastSavedSpec | Absolute path of last Save as test (enables Run) |
 | SlotMemory | `<label>_<slot>` | Last OK slot editor values (grep/url/file/out) |
+| Desktop | Instruction / StepsJson | Tab 3 Copilot instruction + steps JSON (capped) |
 
 ## Known limitations
 
 - GUI is Windows-native AHK; not exercised on Linux CI.
+- Tab 3 requires Windows UI Automation COM (`UIAutomationCore`); recording is click-edge based (not full keyboard macro).
 - Drag-drop uses mouse capture polling (not OLE `IDropTarget`); drop target is the canvas Edit HWND; drag cancels if the app loses focus.
 - Interactive Playwright UIs (`--ui`, codegen, show-report) may need a visible console for some workflows; capture mode redirects to the terminal mirror.
 - Copilot multiline prompts go through a short PowerShell helper so quoting survives `cmd.exe`.
