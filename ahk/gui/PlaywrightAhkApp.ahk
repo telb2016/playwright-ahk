@@ -742,9 +742,14 @@ OnEsc(*) {
 }
 
 OnEscDragOrFocus(*) {
-    global AppGui, BtnTab1
+    global AppGui, BtnTab1, Desktop, BusyDesktop, ActiveTab
     if ChipDrag.Cancel() {
         SetStatus("Drag cancelled")
+        return
+    }
+    if BusyDesktop || (IsObject(Desktop) && Desktop.recording) {
+        OnDesktopStop()
+        SetStatus("Desktop UIA recording stopped (Esc)", "ok")
         return
     }
     try BtnTab1.Focus()
