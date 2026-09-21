@@ -169,20 +169,30 @@ try {
         low := StrLower(output)
         authHints := InStr(low, "not logged") || InStr(low, "unauthor") || InStr(low, "authenticat")
             || InStr(low, "not signed") || InStr(low, "login required") || InStr(low, "gh auth")
-            || InStr(low, "please login") || InStr(low, "not authenticated")
+            || InStr(low, "please login") || InStr(low, "please log in") || InStr(low, "not authenticated")
+            || InStr(low, "sign in") || InStr(low, "sign-in") || InStr(low, "logged out")
+            || InStr(low, "requires authentication") || InStr(low, "auth required")
+            || InStr(low, "run: gh") || InStr(low, "gh auth login")
             || (InStr(low, "401") && InStr(low, "auth"))
+            || (InStr(low, "403") && (InStr(low, "auth") || InStr(low, "forbidden") || InStr(low, "copilot")))
         if exitCode = 0 && !authHints
             return output
         if authHints || exitCode = 127 {
-            banner := Format(
-                "`n────────────────────────────────────────`n"
-                . "ERROR: Copilot CLI failed (exit {1}).`n"
-                . "If PATH is fine but this still fails, you are likely unauthenticated —`n"
-                . "complete Copilot/GitHub login in a terminal so ``copilot`` works, then Send again.`n"
-                . "────────────────────────────────────────`n",
-                exitCode
+            banner :=
+            (
+                "╔══════════════════════════════════════════════════════════╗
+║  COPILOT AUTH / LOGIN REQUIRED                         ║
+║  Output looks unauthenticated or login was required.   ║
+║  Fix: open a terminal → sign in so ``copilot`` works,  ║
+║  then click Send again.                                ║
+╚══════════════════════════════════════════════════════════╝
+"
             )
-            return (output = "" ? "" : output) banner
+            banner := Format(
+                "`n{1}`nERROR: Copilot CLI failed (exit {2}).`n",
+                banner, exitCode
+            )
+            return banner (output = "" ? "" : output)
         }
         if exitCode != 0 && output = ""
             return Format("ERROR: Copilot exited {1} with no captured output.", exitCode)
@@ -281,6 +291,30 @@ class Job {
         Run(full, this.workDir, "Hide", &pid)
         this.pid := pid
         this.partial := ""
+    }
+
+    ; Kill in-flight process + stop multi-line chain. Safe to call from GUI Cancel.
+    Cancel(reason := "CANCELLED by user.") {
+        if this.done
+            return true
+        pid := this.pid
+        if pid {
+            try ProcessClose(pid)
+            ; Best-effort: also kill orphaned powershell/cmd children by waiting briefly
+            try {
+                if ProcessExist(pid)
+                    ProcessClose(pid)
+            }
+            this.pid := 0
+        }
+        this.done := true
+        this.exitCode := -1
+        prefix := this.combined != "" ? this.combined "`n`n" : ""
+        live := this.partial != "" ? this.partial "`n" : ""
+        this.output := prefix live reason
+        this.partial := ""
+        this._CleanupExtras()
+        return true
     }
 
     _CleanupExtras() {

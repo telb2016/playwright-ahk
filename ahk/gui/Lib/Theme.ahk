@@ -14,6 +14,7 @@ class Theme {
     static Ok := "4EC9B0"
     static Err := "F44747"
     static Border := "3E3E42"
+    static Train := "0A4D73"
 
     ; Prefer immersive dark titlebar (Win10 1903+ / Win11). Falls back silently.
     static ApplyDarkTitleBar(hwnd) {
@@ -29,21 +30,21 @@ class Theme {
         return ok = 0
     }
 
-    ; Soft rounded outer region (optional polish). No-op if CreateRoundRectRgn missing.
+    ; Soft rounded outer region via SetWindowRgn (CreateRoundRectRgn). No-op on failure.
     static ApplyRoundedRegion(hwnd, w, h, radius := 16) {
         if !hwnd || w < 32 || h < 32
             return false
-        hrgn := DllCall("gdi32\CreateRoundRectRgn", "int", 0, "int", 0, "int", w + 1, "int", h + 1, "int", radius, "int", radius, "ptr")
+        hrgn := DllCall("gdi32\CreateRoundRectRgn"
+            , "int", 0, "int", 0, "int", w + 1, "int", h + 1
+            , "int", radius, "int", radius, "ptr")
         if !hrgn
             return false
-        ; WinSetRegion takes ownership of the region when successful
-        try {
-            WinSetRegion("RGN:" hrgn, "ahk_id " hwnd)
+        ; SetWindowRgn takes ownership of hrgn on success
+        if DllCall("user32\SetWindowRgn", "ptr", hwnd, "ptr", hrgn, "int", 1) {
             return true
-        } catch {
-            DllCall("gdi32\DeleteObject", "ptr", hrgn)
-            return false
         }
+        DllCall("gdi32\DeleteObject", "ptr", hrgn)
+        return false
     }
 
     static StyleGui(g) {
@@ -52,7 +53,6 @@ class Theme {
     }
 
     static StyleEdit(ctrl, multiline := true) {
-        ; Dark input surface + light caret-friendly text
         opts := "Background" Theme.BgInput " c" Theme.Fg
         ctrl.Opt(opts)
         try ctrl.SetFont("s10 c" Theme.Fg, "Consolas")
@@ -74,5 +74,13 @@ class Theme {
     static StyleStatus(ctrl) {
         ctrl.Opt("Background" Theme.BgPanel " c" Theme.FgDim)
         try ctrl.SetFont("s9 c" Theme.FgDim, "Segoe UI")
+    }
+
+    static StyleTabBtn(ctrl, active := false) {
+        if active
+            ctrl.Opt("Background" Theme.Accent " cFFFFFF")
+        else
+            ctrl.Opt("Background" Theme.BgPanel " c" Theme.FgDim)
+        try ctrl.SetFont("s10 Bold c" (active ? "FFFFFF" : Theme.FgDim), "Segoe UI")
     }
 }

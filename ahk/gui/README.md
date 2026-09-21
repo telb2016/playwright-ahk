@@ -52,9 +52,11 @@ Do **not** run GUI shells from `ahk\gui\` alone — working directory is always 
 
 - Dark multi-line prompt + editable response pane.
 - **Send** runs asynchronously: `copilot -p "<prompt>" --allow-all-tools` (stdout+stderr streamed into the reply pane; GUI does not freeze on `RunWait`).
-- Missing `copilot` / auth failures fail **loud** in the reply pane.
+- **Cancel** aborts an in-flight Copilot job (process kill + timer stop).
+- **Use reply as next prompt** one-click promotes the reply pane into the prompt (cycle edits).
+- Missing `copilot` / auth failures fail **loud** in the reply pane (banner when login/auth strings detected).
 - Last prompt saved to `PlaywrightAhkApp.ini` next to the script.
-- `Ctrl+Enter` sends; `Esc` focuses the tab control.
+- `Ctrl+Enter` sends (Tab 1); `Esc` focuses the tab strip.
 
 ## Tab 2 — Playwright CLI puzzle
 
@@ -62,17 +64,25 @@ Do **not** run GUI shells from `ahk\gui\` alone — working directory is always 
 - Click a chip to append tokens (required slots prompt; empty/cancel **blocks**).
 - Canvas is editable; one command per line.
 - **Run** executes from **repo root**; multi-line stops on first nonzero exit.
+- **Cancel run** aborts the in-flight puzzle job.
 - Empty canvas / incomplete slots (e.g. `--grep=` with no value) **block Run**.
 - Helpers: Clear · Backspace (last piece) · Copy command · live terminal mirror.
+- `F5` Run · `Delete` Backspace piece (Tab 2).
 
 Default first drop: piece flagged `defaultFirstDrop` → `test --project=chromium`.
+
+## UX polish
+
+- **Text-train tab transition** — custom tab strip (not raw Tab3 blink); sliding train wipe banner when swapping Copilot ↔ puzzle.
+- **Rounded chrome** — `Theme.ApplyRoundedRegion` + dark title bar on create/resize.
+- Loud Copilot auth banner when output looks unauthenticated.
 
 ## Layout
 
 ```text
 ahk/gui/PlaywrightAhkApp.ahk   ← main entry
 ahk/gui/Lib/Theme.ahk
-ahk/gui/Lib/ShellExec.ahk      ← async capture jobs
+ahk/gui/Lib/ShellExec.ahk      ← async capture jobs + Cancel
 ahk/gui/Lib/Json.ahk
 ahk/gui/Lib/PuzzlePieces.ahk
 ahk/InvestorDemo.ahk
@@ -80,9 +90,21 @@ ahk/Playwright.ahk             ← hardened wrappers (#Include)
 scripts/puzzle-pieces.json     ← Tab 2 catalog (repo root)
 ```
 
+## CHANGELOG (overnight polish)
+
+- **Train wipe** — custom tabs + animated train banner on Tab1↔Tab2 (no raw Tab3 blink).
+- **Use reply as next prompt** — one-click promote reply → prompt for Copilot cycle.
+- **ApplyRoundedRegion** — wired on create/resize (SetWindowRgn); dark title bar retained.
+- **Cancel running job** — Cancel (Copilot) + Cancel run (puzzle) kill PID and stop poll timers.
+- Louder Copilot auth / login-required banner in reply pane.
+- Hotkeys: Ctrl+Enter Send (Tab1), F5 Run (Tab2), Delete Backspace piece (Tab2).
+
 ## Known limitations
 
 - GUI is Windows-native AHK; not exercised on Linux CI.
-- Drag-drop onto the canvas is click-primary (chips append on click).
+- Drag-drop onto the canvas is still click-primary (chips append on click); true DnD deferred.
+- Slot values still use `InputBox` (dark slot-editor dialog deferred).
+- Tray icon + global Ctrl+Alt+P show/focus deferred.
+- Canvas / terminal persistence to ini deferred (prompt already saved).
 - Interactive Playwright UIs (`--ui`, codegen, show-report) may need a visible console for some workflows; capture mode redirects to the terminal mirror.
 - Copilot multiline prompts go through a short PowerShell helper so quoting survives `cmd.exe`.
