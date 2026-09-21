@@ -21,6 +21,8 @@ class DesktopRecord {
     static KeyRepeatDebounceMs := 200   ; coalesce identical key auto-repeats while recording
     static DefaultWaitMs := 1000        ; Tab3 Wait button / action:"wait" default
     static MaxWaitMs := 60000
+    static HoverDwellMs := 700          ; pointer dwell for action:"hover" (~600–800ms)
+    static HoverSlopPx := 6             ; max move while dwelling / leave-slop after hover
 
     steps := []          ; array of Maps
     recording := false
@@ -47,6 +49,11 @@ class DesktopRecord {
     dragState := ""              ; Map start capture while LButton drag active, or ""
     lastKeyKeys := ""             ; last action:"key" keys string (auto-repeat debounce)
     lastKeyTick := 0
+    hoverWatch := ""              ; Map {x,y,tick,key} while dwelling for hover, or ""
+    hoverArmed := true            ; false after a hover until leave target / move beyond slop
+    hoverLastKey := ""            ; target key of last recorded hover
+    hoverLastX := 0
+    hoverLastY := 0
 
     __New(repoRoot) {
         this.repoRoot := repoRoot
@@ -72,6 +79,11 @@ class DesktopRecord {
         this.dragState := ""
         this.lastKeyKeys := ""
         this.lastKeyTick := 0
+        this.hoverWatch := ""
+        this.hoverArmed := true
+        this.hoverLastKey := ""
+        this.hoverLastX := 0
+        this.hoverLastY := 0
     }
 
     Count() => this.steps.Length
@@ -212,6 +224,11 @@ class DesktopRecord {
         this.dragState := ""
         this.lastKeyKeys := ""
         this.lastKeyTick := 0
+        this.hoverWatch := ""
+        this.hoverArmed := true
+        this.hoverLastKey := ""
+        this.hoverLastX := 0
+        this.hoverLastY := 0
         this.dblClickMs := DesktopRecord.GetDoubleClickTimeMs()
         this.sessionDisplay := ScreenSpots.CaptureDisplayProfile()
         this.noteFullscreen := false
@@ -219,7 +236,7 @@ class DesktopRecord {
         this._StartWheelHotkeys()
         SetTimer(this._Poll.Bind(this), DesktopRecord.MinPollMs)
         spotsNote := this.strictSpots ? " · Strict spots ON" : " · Strict spots OFF"
-        this._Status("Desktop UIA recording… click/dblclick/rclick/drag/wheel/type/key (Esc/Stop)" spotsNote, "ok")
+        this._Status("Desktop UIA recording… click/dblclick/rclick/drag/wheel/hover/type/key (Esc/Stop)" spotsNote, "ok")
         return true
     }
 
@@ -244,6 +261,11 @@ class DesktopRecord {
         this._StopWheelHotkeys()
         this.lastKeyKeys := ""
         this.lastKeyTick := 0
+        this.hoverWatch := ""
+        this.hoverArmed := true
+        this.hoverLastKey := ""
+        this.hoverLastX := 0
+        this.hoverLastY := 0
         this._Status("Recording stopped — " this.steps.Length " steps", "ok")
     }
 
@@ -292,6 +314,7 @@ class DesktopRecord {
             return
         if this._ShouldSkipTyping()
             return
+        this._CancelHoverWatch()
         dir := Integer(dir)
         if dir = 0
             return
@@ -778,6 +801,7 @@ class DesktopRecord {
         }
         down := GetKeyState("LButton", "P")
         if down && !this.lastBtn {
+            this._CancelHoverWatch()  ; button down cancels hover dwell
             if !this._ShouldSkipTyping() {
                 SetTimer(this._FlushTypeIdle.Bind(this), 0)
                 this._FlushTypeBatch("before-click")
@@ -796,6 +820,7 @@ class DesktopRecord {
         this.lastBtn := down
         rdown := GetKeyState("RButton", "P")
         if rdown && !this.lastRBtn {
+            this._CancelHoverWatch()  ; button down cancels hover dwell
             ; Right-button down edge — mirror left-click debounce (~180ms); never emit left-click
             if !this._ShouldSkipTyping() && (A_TickCount - this.lastClickTick) >= DesktopRecord.ClickDebounceMs {
                 this.lastClickTick := A_TickCount
@@ -813,10 +838,141 @@ class DesktopRecord {
             }
         }
         this.lastRBtn := rdown
+        ; Hover dwell (no buttons; cancelled by move/button/pending flush)
+        if !down && !rdown
+            this._TickHover()
         ; Esc stops (also handled in type hook)
         if GetKeyState("Escape", "P") {
             this.StopRecord()
         }
+    }
+
+
+    _CancelHoverWatch() {
+        this.hoverWatch := ""
+    }
+
+    ; Stable identity string for hover debounce (leave-target).
+    _HoverTargetKey(desc) {
+        if !(desc is Map)
+            return ""
+        aid := desc.Has("AutomationId") ? Trim(String(desc["AutomationId"])) : ""
+        name := desc.Has("Name") ? Trim(String(desc["Name"])) : ""
+        ct := desc.Has("ControlType") ? String(desc["ControlType"]) : "0"
+        loc := desc.Has("LocalizedControlType") ? Trim(String(desc["LocalizedControlType"])) : ""
+        cls := desc.Has("ClassName") ? Trim(String(desc["ClassName"])) : ""
+        pi := desc.Has("ParentIndex") ? String(desc["ParentIndex"]) : "0"
+        win := desc.Has("Window") && desc["Window"] is Map ? desc["Window"] : Map()
+        wcls := win.Has("Class") ? String(win["Class"]) : ""
+        return aid "|" name "|" ct "|" loc "|" cls "|" pi "|" wcls
+    }
+
+    ; While recording: dwell without buttons → one action:"hover" (same Describe path as click).
+    _TickHover() {
+        if !this.recording
+            return
+        ; Ignore while pending click/drag/type/wheel flush is active
+        if (this.pendingClick is Map) || (this.dragState is Map) || (this.pendingWheel is Map) || (this.typeBuf != "") {
+            this._CancelHoverWatch()
+            return
+        }
+        if this._ShouldSkipTyping() {
+            this._CancelHoverWatch()
+            return
+        }
+        MouseGetPos(&sx, &sy)
+        now := A_TickCount
+        slop := DesktopRecord.HoverSlopPx
+
+        ; After a recorded hover: require leave target or move beyond slop before next
+        if !this.hoverArmed {
+            dx := Abs(sx - Integer(this.hoverLastX))
+            dy := Abs(sy - Integer(this.hoverLastY))
+            if dx > slop || dy > slop {
+                this.hoverArmed := true
+                this.hoverLastKey := ""
+            } else {
+                ; Still near last hover point — sample UIA; re-arm only if target changed
+                descQuick := this._DescribeAt(sx, sy)
+                keyQuick := this._HoverTargetKey(descQuick)
+                if keyQuick != "" && this.hoverLastKey != "" && keyQuick != this.hoverLastKey {
+                    this.hoverArmed := true
+                    this.hoverLastKey := ""
+                } else {
+                    return
+                }
+            }
+        }
+
+        if !(this.hoverWatch is Map) {
+            desc := this._DescribeAt(sx, sy)
+            this.hoverWatch := Map(
+                "x", sx,
+                "y", sy,
+                "tick", now,
+                "key", this._HoverTargetKey(desc)
+            )
+            return
+        }
+
+        dx := Abs(sx - Integer(this.hoverWatch["x"]))
+        dy := Abs(sy - Integer(this.hoverWatch["y"]))
+        if dx > slop || dy > slop {
+            ; Significant move — restart dwell at new spot
+            desc := this._DescribeAt(sx, sy)
+            this.hoverWatch := Map(
+                "x", sx,
+                "y", sy,
+                "tick", now,
+                "key", this._HoverTargetKey(desc)
+            )
+            return
+        }
+
+        if (now - Integer(this.hoverWatch["tick"])) < DesktopRecord.HoverDwellMs
+            return
+
+        ; Dwell met — re-describe; target must still match watch key
+        desc := this._DescribeAt(sx, sy)
+        key := this._HoverTargetKey(desc)
+        if key != this.hoverWatch["key"] {
+            this.hoverWatch := Map("x", sx, "y", sy, "tick", now, "key", key)
+            return
+        }
+        this._CommitHover(desc, sx, sy, key)
+    }
+
+    _CommitHover(desc, sx, sy, key) {
+        this._CancelHoverWatch()
+        SetTimer(this._FlushTypeIdle.Bind(this), 0)
+        this._FlushTypeBatch("before-hover")
+        this._FlushWheelBatch("before-hover")
+        if !(desc is Map)
+            desc := this._DescribeAt(sx, sy)
+        hardMiss := true
+        if desc is Map && desc.Has("Targets") && desc["Targets"] is Array {
+            for t in desc["Targets"] {
+                if t is Map && !(t.Has("soft") && t["soft"]) {
+                    hardMiss := false
+                    break
+                }
+            }
+        }
+        if hardMiss
+            this._Status("UIA miss @ hover — stored soft window-relative only", "err")
+        step := this._StepFromDesc("hover", desc, sx, sy, true)
+        this.steps.Push(step)
+        this._Emit(step)
+        label := this.StepLabel(step)
+        extra := ""
+        if step.Has("spots") && step["spots"].Has("spots")
+            extra := " · spots " step["spots"]["spots"].Length
+        this._Status("Recorded #" this.steps.Length ": " label extra, "ok")
+        ; Debounce: do not spam — leave target or move beyond slop before next hover
+        this.hoverArmed := false
+        this.hoverLastKey := key
+        this.hoverLastX := sx
+        this.hoverLastY := sy
     }
 
     ; Left-button edge: defer commit for GetDoubleClickTime so a true dblclick is one step.
@@ -887,6 +1043,7 @@ class DesktopRecord {
         if dx <= DesktopRecord.DragThresholdPx && dy <= DesktopRecord.DragThresholdPx
             return
         ; Cancel pending click — this gesture is a drag, never a left-click
+        this._CancelHoverWatch()
         px := Integer(this.pendingClick["x"])
         py := Integer(this.pendingClick["y"])
         this.pendingClick := ""
@@ -1089,6 +1246,8 @@ class DesktopRecord {
             return "dblclick " target
         if action = "rclick" || action = "rightclick"
             return "rclick " target
+        if action = "hover"
+            return "hover " target
         if action = "drag" {
             endBit := ""
             if step.Has("endScreen") && step["endScreen"] is Map {
@@ -1325,6 +1484,18 @@ class DesktopRecord {
                             return spotRes
                         return { ok: true, message: "PLAY soft wheel WindowRelative" (spotRes.message != "" ? " · " spotRes.message : "") }
                     }
+                    if actionEarly = "hover" {
+                        if !UiaCore.SoftMoveRelative(hwnd, st["relX"], st["relY"])
+                            return { ok: false, message: "FAIL soft hover" }
+                        settleH := step.Has("settleMs") ? Integer(step["settleMs"]) : 120
+                        if settleH < 0
+                            settleH := 0
+                        Sleep(settleH)
+                        spotRes := this._VerifyStepSpots(hwnd, step)
+                        if !spotRes.ok
+                            return spotRes
+                        return { ok: true, message: "PLAY soft hover WindowRelative" (spotRes.message != "" ? " · " spotRes.message : "") }
+                    }
                     clickCount := dbl ? 2 : 1
                     if UiaCore.SoftClickRelative(hwnd, st["relX"], st["relY"], right, clickCount) {
                         spotRes := this._VerifyStepSpots(hwnd, step)
@@ -1392,10 +1563,16 @@ class DesktopRecord {
             if !UiaCore.InvokeDoubleClick(resolved.el) {
                 return { ok: false, message: "FAIL dblclick via " used }
             }
+        } else if action = "hover" {
+            if !UiaCore.InvokeHover(resolved.el, 0) {
+                return { ok: false, message: "FAIL hover via " used }
+            }
         } else if !UiaCore.InvokeClick(resolved.el) {
             return { ok: false, message: "FAIL invoke/click via " used }
         }
-        settle := step.Has("settleMs") ? Integer(step["settleMs"]) : 80
+        ; Hover wants a slightly longer default settle for tooltips/menus
+        settleDef := (action = "hover") ? 120 : 80
+        settle := step.Has("settleMs") ? Integer(step["settleMs"]) : settleDef
         if settle < 0
             settle := 0
         Sleep(settle)
