@@ -259,7 +259,7 @@ BuildGui() {
     global Catalog, Tab1Ctrls, Tab2Ctrls, Tab3Ctrls, ChipBtns, EdChipFilter, LblNoChipMatch
     global BtnTab1, BtnTab2, BtnTab3, WipeGui, WipeLbl
     global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr
-    global BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskSend, BtnDeskClear, BtnDeskProbe
+    global BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskOpenDir, BtnDeskSend, BtnDeskClear, BtnDeskProbe
 
     AppGui := Gui("+Resize +MinSize1000x640", "Playwright AHK — Overnight GUI")
     Theme.StyleGui(AppGui)
@@ -496,9 +496,12 @@ BuildGui() {
     BtnDeskVerify := AppGui.Add("Button", "x" (bx + 104) " y210 w96 h28", "Verify")
     Theme.StyleButton(BtnDeskVerify)
     BtnDeskVerify.OnEvent("Click", OnDesktopVerify)
-    BtnDeskSave := AppGui.Add("Button", "x" bx " y248 w200 h28", "Save to recordings/windows")
+    BtnDeskSave := AppGui.Add("Button", "x" bx " y248 w96 h28", "Save JSON")
     Theme.StyleButton(BtnDeskSave)
     BtnDeskSave.OnEvent("Click", OnDesktopSave)
+    BtnDeskOpenDir := AppGui.Add("Button", "x" (bx + 104) " y248 w96 h28", "Folder")
+    Theme.StyleButton(BtnDeskOpenDir)
+    BtnDeskOpenDir.OnEvent("Click", OnDesktopOpenFolder)
     BtnDeskClear := AppGui.Add("Button", "x" bx " y286 w96 h28", "Clear")
     Theme.StyleButton(BtnDeskClear)
     BtnDeskClear.OnEvent("Click", OnDesktopClear)
@@ -519,7 +522,7 @@ BuildGui() {
     Theme.StyleEdit(EdDesktopLog)
 
     Tab3Ctrls := [t3Banner, t3Hint, t3StepsLbl, EdDesktopJson
-        , BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskClear, BtnDeskProbe
+        , BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskOpenDir, BtnDeskClear, BtnDeskProbe
         , t3InstrLbl, EdDesktopInstr, BtnDeskSend, t3LogLbl, EdDesktopLog]
 
     StatusBar := AppGui.Add("Text", "x10 y675 w960 h24 +0x100", " Ready")  ; SS_NOTIFY for click
@@ -1699,6 +1702,14 @@ OnDesktopSave(*) {
     path := Desktop.Save(RepoRoot)
     if path != ""
         try TrayTip("Desktop UIA", "Saved`n" path, "Iconi")
+}
+
+OnDesktopOpenFolder(*) {
+    global RepoRoot
+    dir := DesktopRecord.Dir(RepoRoot)
+    DesktopRecord.EnsureDirs(RepoRoot)
+    Run('explorer.exe "' dir '"')
+    SetStatus("Opened recordings\\windows")
 }
 
 OnDesktopProbe(*) {
