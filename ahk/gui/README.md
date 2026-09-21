@@ -107,7 +107,7 @@ Bulletproof **AutoHotkey + UI Automation** recorder for the Windows machine itse
 - **Send desktop → Copilot** — seeds *AutoHotkey + UI Automation* — **never** `@playwright/test`. Separate from Tab 1 browser Record pane.
 - **Boundary** — Tab 3 never pipes into `npx playwright` / codegen / Save as test (Save as test explicitly refuses `windows-uia` / AHK UIA seed text).
 
-Controls: **Record · Stop · Play · Verify · Save · Folder · Load · Clear all · Probe · Strict spots · step Delete/Up/Down · Send desktop → Copilot**. Hotkey `Ctrl+3`.
+Controls: **Record · Stop · Play · Verify · Save · Folder · Load · Clear all · Probe · Strict spots · step Delete/Up/Down · Send desktop → Copilot**. Hotkeys `Ctrl+3`, `Ctrl+Shift+J` copy JSON.
 
 ## UX polish
 

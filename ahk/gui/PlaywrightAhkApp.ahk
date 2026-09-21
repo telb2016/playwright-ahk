@@ -242,6 +242,7 @@ HideToTray() {
         return
     HidingToTray := true
     ChipDrag.Cancel()
+    try OnDesktopStop()
     SaveIniAll()
     AppVisible := false
     try AppGui.Hide()
