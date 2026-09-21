@@ -33,7 +33,7 @@ ahk\gui\PlaywrightAhkApp.ahk
 npx --no-install playwright test --project=chromium
 ```
 
-- **Tab 3** is Windows Desktop UIA only (never Playwright) — Record clicks/dblclick/rclick/drag/wheel/typing → `recordings\windows\`.
+- **Tab 3** is Windows Desktop UIA only (never Playwright) — Record clicks/dblclick/rclick/drag/wheel/typing/key-chords → `recordings\windows\`.
 
 Optional demo hotkeys: run `ahk\InvestorDemo.ahk`  
 (`Ctrl+Alt+1` Test · `Ctrl+Alt+2` Codegen · `Ctrl+Alt+3` ShowReport · `Ctrl+Alt+0` launch overnight GUI).
@@ -94,7 +94,7 @@ Default first drop: piece flagged `defaultFirstDrop` → `test --project=chromiu
 
 Bulletproof **AutoHotkey + UI Automation** recorder for the Windows machine itself.
 
-- **Record** — clicks, **double-clicks**, **right-clicks**, **drags**, **mouse wheel**, and typed text via `IUIAutomation` (`UiaCore.ahk`) + AHK v2 `InputHook` / `~WheelUp|Down` hotkeys. Each pointer/type step stores a **ranked target list**:
+- **Record** — clicks, **double-clicks**, **right-clicks**, **drags**, **mouse wheel**, typed text, and **keyboard chords / hotkeys** via `IUIAutomation` (`UiaCore.ahk`) + AHK v2 `InputHook` / `~WheelUp|Down` hotkeys. Each pointer/type/key step stores a **ranked target list**:
   1. `AutomationId`
   2. `Name` + `ControlType`
   3. `LocalizedControlType` + index among siblings
@@ -103,10 +103,11 @@ Bulletproof **AutoHotkey + UI Automation** recorder for the Windows machine itse
 - **Drag** — `action: "drag"`. LButton press → move past ~**10px** (`DragThresholdPx`) before release becomes **one** drag step (not click/dblclick). Cancels the pending-click timer; captures start `targets`/`window`/`screen` (+ optional Strict spots at start only) and end `endTargets`/`endWindow`/`endScreen`. Flushes pending type/wheel; skipped while this GUI is focused. Never emits a left-click for a completed drag. Playback: hard-fail start window → resolve start via ranked targets → end via `endTargets` else soft `endScreen`/relative → `UiaCore.InvokeDrag` / `SoftDragRelative`.
 - **Mouse wheel** — `action: "wheel"` with signed `notches` (+up / −down) and `delta` (= notches × 120). Rapid same-direction notches within ~**180ms** coalesce into one JSON step (keeps recordings sane). Window/target captured under cursor on the first notch of a batch. Playback: activate hard-keys → move to target when resolved → `WheelUp`/`WheelDown`.
 - **Right-click** — `action: "rclick"`. Right-button down edge (same ~**180ms** debounce as left-click); flushes pending type/click/wheel first; ranked UIA targets + window hard-keys under cursor. Skipped while this GUI is focused. Never emits a left-click for the right button. Playback: same hard gate → ranked UIA → optional Strict spots; `UiaCore.InvokeRightClick` (clickable point / bounds) or soft relative with Right. Legacy `action:"rightclick"` still plays.
-- **Typing** — `action: "type"` steps with a `text` field. Batched ~**500ms** after last key (idle debounce); pure modifiers ignored; **Enter** commits early (appends `\n`). Focused-element ranked targets attached when UIA can describe them. Typing while this GUI is focused is skipped.
-- **Play / Verify** — order: (1) window/process class hard gate → (2) ranked UIA targets → (3) optional **Strict fullscreen spots**. For `type`: focus + **SetValue** when possible, else `SendText`. For `drag`: start→end as above. ListBox **highlights the current step** as Play/Verify runs; **failing step stays selected** on hard-fail.
-- **Step list editor** — ListBox (index · action · short target, including `dblclick` / `rclick` / `drag …→…` / `wheelUp|Down xN`); **Delete** / **Up** / **Down**; **Clear all** confirms. Stays synced with Steps JSON + ini.
-- **Strict fullscreen spots** (Tab 3 toggle, default ON) — 9 client-area samples as **% of client W/H** (never taskbar/clock/tray). Settle wait ~200ms (spots unchanged) before hash. Playback allows ±Δ RGB + partial pass (~2/3). Snapshot **display profile** (resolution, DPI/scale, monitor count) — hard-fail early if changed. Pixel identity for *controls* remains last-resort soft only. Unchanged for type steps.
+- **Typing** — `action: "type"` steps with a `text` field. Batched ~**500ms** after last key (idle debounce); pure modifiers ignored; **Enter** commits early (appends `\n`). Focused-element ranked targets attached when UIA can describe them. Typing while this GUI is focused is skipped. Ordinary printable text stays `type` (not `key`).
+- **Key / chord** — `action: "key"` with a `keys` string in AHK **Send**-friendly form (e.g. `^s`, `{F5}`, `!{F4}`, `^{Left}`). While recording, **Ctrl/Alt/Win** + key, or standalone function/nav keys (F1–F12, arrows, Home/End/PgUp/PgDn, Insert/Delete, Apps/Menu), flush any pending type batch and emit one key step (ranked targets from focused element when available; optional Strict spots on the active window). **Esc** still **StopRecord** — never recorded as a key step. Skipped while this GUI is focused. Playback: hard-gate window → **SetFocus** when resolved → `Send("{Blind}" keys)` → Strict spots verify when present. ListBox: `key ^s` / `key {F5}`.
+- **Play / Verify** — order: (1) window/process class hard gate → (2) ranked UIA targets → (3) optional **Strict fullscreen spots**. For `type`: focus + **SetValue** when possible, else `SendText`. For `key`: focus then `Send("{Blind}" …)`. For `drag`: start→end as above. ListBox **highlights the current step** as Play/Verify runs; **failing step stays selected** on hard-fail.
+- **Step list editor** — ListBox (index · action · short target, including `dblclick` / `rclick` / `drag …→…` / `wheelUp|Down xN` / `key ^s`); **Delete** / **Up** / **Down**; **Clear all** confirms. Stays synced with Steps JSON + ini.
+- **Strict fullscreen spots** (Tab 3 toggle, default ON) — 9 client-area samples as **% of client W/H** (never taskbar/clock/tray). Settle wait ~200ms (spots unchanged) before hash. Playback allows ±Δ RGB + partial pass (~2/3). Snapshot **display profile** (resolution, DPI/scale, monitor count) — hard-fail early if changed. Pixel identity for *controls* remains last-resort soft only. Unchanged for type/key steps.
 - **Save** — `recordings/windows/desktop-*.json` (+ `.ahk` stub). Gitignored payloads; folder kept.
 - **Send desktop → Copilot** — seeds *AutoHotkey + UI Automation* — **never** `@playwright/test`. Separate from Tab 1 browser Record pane.
 - **Boundary** — Tab 3 never pipes into `npx playwright` / codegen / Save as test (Save as test explicitly refuses `windows-uia` / AHK UIA seed text).
@@ -145,6 +146,7 @@ scripts/puzzle-pieces.json     ← Tab 2 catalog (repo root)
 ## CHANGELOG (overnight polish)
 
 ### PR #6 — `ahk/overnight-polish-2`
+- **Tab 3 — key / chord** — `action:"key"` + `keys` (AHK Send form: `^s`, `{F5}`, `!{F4}`); Ctrl/Alt/Win chords and F/nav/special keys; flush pending type first; Esc still StopRecord; play via SetFocus + `Send("{Blind}" …)`; ListBox `key …`. Ordinary typing remains `action:"type"`.
 - **Tab 3 — drag** — `action:"drag"` when LButton moves past ~10px before release; cancels pending click (no left-click emit); start+end UIA targets/`endScreen`; play via `UiaCore.InvokeDrag` / `SoftDragRelative`; ListBox shows `drag … → …`.
 - **Tab 3 — rclick (right-click)** — `action:"rclick"` on RButton down edge (~180ms debounce); flush pending type/click/wheel; skip when host GUI focused; play/verify via `UiaCore.InvokeRightClick` / soft relative Right; ListBox shows `rclick …` (legacy `rightclick` still plays).
 - **Tab 3 — dblclick + mouse wheel** — `action:"dblclick"` via `GetDoubleClickTime` pending-click coalesce; `action:"wheel"` with notches/delta + ~180ms same-direction batch; UiaCore double-click / Wheel helpers; ListBox summaries updated.
@@ -206,7 +208,7 @@ scripts/puzzle-pieces.json     ← Tab 2 catalog (repo root)
 ## Known limitations
 
 - GUI is Windows-native AHK; not exercised on Linux CI.
-- Tab 3 requires Windows UI Automation COM (`UIAutomationCore`); clicks are edge-polled with a `GetDoubleClickTime` pending window for dblclick; LButton move past ~10px before release records `action:"drag"` (not click); right-click uses RButton edge + ~180ms debounce (`action:"rclick"`); wheel uses `~WheelUp`/`~WheelDown` (batched ~180ms same-direction); typing uses visible `InputHook` batches (not a full low-level keyboard macro / chord recorder).
+- Tab 3 requires Windows UI Automation COM (`UIAutomationCore`); clicks are edge-polled with a `GetDoubleClickTime` pending window for dblclick; LButton move past ~10px before release records `action:"drag"` (not click); right-click uses RButton edge + ~180ms debounce (`action:"rclick"`); wheel uses `~WheelUp`/`~WheelDown` (batched ~180ms same-direction); typing uses visible `InputHook` batches into `action:"type"`; modifier chords and F/nav keys become discrete `action:"key"` Send strings (not a full low-level keyboard macro — auto-repeat may emit many key steps; Esc stops record and is never a key step).
 - Drag-drop uses mouse capture polling (not OLE `IDropTarget`); drop target is the canvas Edit HWND; drag cancels if the app loses focus.
 - Interactive Playwright UIs (`--ui`, codegen, show-report) may need a visible console for some workflows; capture mode redirects to the terminal mirror.
 - Copilot multiline prompts go through a short PowerShell helper so quoting survives `cmd.exe`.
