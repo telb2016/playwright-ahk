@@ -100,7 +100,7 @@ Bulletproof **AutoHotkey + UI Automation** recorder for the Windows machine itse
 - **Play / Verify** — resolve window by **process name + window class** (hard-fail if wrong). Try ranked targets in order with short wait-for-condition; one miss does **not** fail until the list is exhausted.
 - **Save** — `recordings/windows/desktop-*.json` (+ `.ahk` stub). Gitignored payloads; folder kept.
 - **Send desktop → Copilot** — seeds *AutoHotkey + UI Automation* — **never** `@playwright/test`. Separate from Tab 1 browser Record pane.
-- **Boundary** — Tab 3 never pipes into `npx playwright` / codegen / Save as test.
+- **Boundary** — Tab 3 never pipes into `npx playwright` / codegen / Save as test (Save as test explicitly refuses `windows-uia` / AHK UIA seed text).
 
 Controls: **Record · Stop · Play · Verify · Save · Folder · Clear · Probe · Send desktop → Copilot**. Hotkey `Ctrl+3`. Right-click is recorded; **Probe** dumps ranked targets under the cursor.
 

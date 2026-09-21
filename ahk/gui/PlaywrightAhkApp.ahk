@@ -1507,6 +1507,12 @@ OnSendRecordingToCopilot(*) {
 OnSaveAsTest(*) {
     global RepoRoot, EdReply, BtnRunSavedTest, LastSavedSpec
     raw := EdReply.Value
+    ; Boundary: never treat Tab3 desktop UIA / AHK seed as a Playwright test
+    if InStr(raw, '"kind": "windows-uia"') || InStr(raw, "windows-uia") || InStr(raw, "UI Automation desktop steps") {
+        SetStatus("Save as test blocked — desktop UIA is not Playwright", "err")
+        try TrayTip("Save as test", "desktop UIA / AHK seed — not a Playwright test", "Iconx")
+        return
+    }
     body := RecordSession.StripMarkdownFences(raw)
     if !RecordSession.LooksLikePlaywrightTest(body) {
         SetStatus("not a runnable test")
@@ -1659,12 +1665,30 @@ OnDesktopRecord(*) {
 }
 
 OnDesktopStop(*) {
-    global Desktop, BtnDeskRecord, BtnDeskStop, BusyDesktop, EdDesktopJson
+    global Desktop, BtnDeskRecord, BtnDeskStop, BusyDesktop, EdDesktopJson, EdDesktopLog
     Desktop.StopRecord()
     BusyDesktop := false
     try BtnDeskRecord.Enabled := true
     try BtnDeskStop.Enabled := false
     try EdDesktopJson.Value := Desktop.ToJson()
+    ; Summarize ranked strategies captured
+    try {
+        summary := "Recorded " Desktop.Count() " steps:`n"
+        for i, step in Desktop.steps {
+            summary .= "#" i " " Desktop.StepLabel(step)
+            if step.Has("targets") {
+                summary .= " ["
+                for j, tg in step["targets"] {
+                    if j > 1
+                        summary .= ", "
+                    summary .= (tg.Has("strategy") ? tg["strategy"] : "?")
+                }
+                summary .= "]"
+            }
+            summary .= "`n"
+        }
+        EdDesktopLog.Value := summary
+    }
     UpdateTrayTip()
     SaveIniAll()
 }
