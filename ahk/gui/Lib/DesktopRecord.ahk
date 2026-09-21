@@ -18,6 +18,7 @@ class DesktopRecord {
     static DblClickSlopPx := 6          ; max movement between clicks of a dblclick
     static WheelDeltaPerNotch := 120    ; Win32 WHEEL_DELTA convention
     static DragThresholdPx := 10        ; LButton move before click→drag
+    static KeyRepeatDebounceMs := 200   ; coalesce identical key auto-repeats while recording
 
     steps := []          ; array of Maps
     recording := false
@@ -42,6 +43,8 @@ class DesktopRecord {
     dblClickMs := 500            ; refreshed from GetDoubleClickTime at record start
     wheelHotkeysOn := false
     dragState := ""              ; Map start capture while LButton drag active, or ""
+    lastKeyKeys := ""             ; last action:"key" keys string (auto-repeat debounce)
+    lastKeyTick := 0
 
     __New(repoRoot) {
         this.repoRoot := repoRoot
@@ -65,6 +68,8 @@ class DesktopRecord {
         this.pendingClick := ""
         this.pendingWheel := ""
         this.dragState := ""
+        this.lastKeyKeys := ""
+        this.lastKeyTick := 0
     }
 
     Count() => this.steps.Length
@@ -203,6 +208,8 @@ class DesktopRecord {
         this.pendingClick := ""
         this.pendingWheel := ""
         this.dragState := ""
+        this.lastKeyKeys := ""
+        this.lastKeyTick := 0
         this.dblClickMs := DesktopRecord.GetDoubleClickTimeMs()
         this.sessionDisplay := ScreenSpots.CaptureDisplayProfile()
         this.noteFullscreen := false
@@ -233,6 +240,8 @@ class DesktopRecord {
         this._FlushWheelBatch("stop")
         this._StopTypeHook()
         this._StopWheelHotkeys()
+        this.lastKeyKeys := ""
+        this.lastKeyTick := 0
         this._Status("Recording stopped — " this.steps.Length " steps", "ok")
     }
 
@@ -679,6 +688,13 @@ class DesktopRecord {
         keys := String(keys)
         if keys = ""
             return
+        ; Auto-repeat flood: identical consecutive keys within KeyRepeatDebounceMs → one step
+        if keys = this.lastKeyKeys && (A_TickCount - this.lastKeyTick) < DesktopRecord.KeyRepeatDebounceMs {
+            this.lastKeyTick := A_TickCount  ; slide window while key is held
+            return
+        }
+        this.lastKeyKeys := keys
+        this.lastKeyTick := A_TickCount
         desc := UiaCore.GetFocusedDescribe()
         sx := 0, sy := 0, hwndUnder := 0
         if desc is Map && desc.Has("ClickX") {
