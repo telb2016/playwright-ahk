@@ -17,6 +17,7 @@ class DesktopRecord {
     recording := false
     playing := false
     lastBtn := false
+    lastRBtn := false
     lastClickTick := 0
     repoRoot := ""
     onStep := ""         ; callback(stepMap)
@@ -157,6 +158,7 @@ class DesktopRecord {
         }
         this.recording := true
         this.lastBtn := GetKeyState("LButton", "P")
+        this.lastRBtn := GetKeyState("RButton", "P")
         this.lastClickTick := 0
         SetTimer(this._Poll.Bind(this), DesktopRecord.MinPollMs)
         this._Status("Desktop UIA recording… click UI targets (Esc/Stop to end)", "ok")
@@ -178,20 +180,27 @@ class DesktopRecord {
         }
         down := GetKeyState("LButton", "P")
         if down && !this.lastBtn {
-            ; rising edge
             if (A_TickCount - this.lastClickTick) >= DesktopRecord.ClickDebounceMs {
                 this.lastClickTick := A_TickCount
-                this._CaptureClick()
+                this._CaptureClick("click")
             }
         }
         this.lastBtn := down
+        rdown := GetKeyState("RButton", "P")
+        if rdown && !this.lastRBtn {
+            if (A_TickCount - this.lastClickTick) >= DesktopRecord.ClickDebounceMs {
+                this.lastClickTick := A_TickCount
+                this._CaptureClick("rightclick")
+            }
+        }
+        this.lastRBtn := rdown
         ; Esc stops
         if GetKeyState("Escape", "P") {
             this.StopRecord()
         }
     }
 
-    _CaptureClick() {
+    _CaptureClick(action := "click") {
         MouseGetPos(&sx, &sy, &hwndUnder)
         desc := UiaCore.ElementFromScreenPoint(sx, sy)
         if desc = "" || !(desc is Map) {
@@ -233,7 +242,7 @@ class DesktopRecord {
             this._Status("UIA miss @ click — stored soft window-relative only", "err")
         }
         step := Map(
-            "action", "click",
+            "action", action,
             "timeoutMs", 4000,
             "window", desc.Has("Window") ? desc["Window"] : Map(),
             "targets", desc.Has("Targets") ? desc["Targets"] : [],
@@ -371,7 +380,8 @@ class DesktopRecord {
                     return { ok: true, message: "VERIFY soft-only (no UIA hit) strategy=" st["strategy"] " — accepted as soft" }
                 }
                 if st.Has("relX") {
-                    if UiaCore.SoftClickRelative(hwnd, st["relX"], st["relY"])
+                    right := (step.Has("action") && step["action"] = "rightclick")
+                    if UiaCore.SoftClickRelative(hwnd, st["relX"], st["relY"], right)
                         return { ok: true, message: "PLAY soft WindowRelative (last resort)" }
                 }
                 return { ok: false, message: "FAIL soft fallback click" }
@@ -383,7 +393,13 @@ class DesktopRecord {
             return { ok: true, message: "VERIFY ok via " used }
         }
 
-        if !UiaCore.InvokeClick(resolved.el) {
+        action := step.Has("action") ? step["action"] : "click"
+        if action = "rightclick" {
+            ; Prefer clickable/bounds right-click (Invoke is left-default)
+            if !UiaCore.InvokeRightClick(resolved.el) {
+                return { ok: false, message: "FAIL right-click via " used }
+            }
+        } else if !UiaCore.InvokeClick(resolved.el) {
             return { ok: false, message: "FAIL invoke/click via " used }
         }
         ; Brief settle + re-check element still addressable (property wait)
@@ -449,6 +465,22 @@ class DesktopRecord {
         if instruction != ""
             prompt .= "`n`n" instruction
         return prompt
+    }
+
+    ; Describe element under cursor without appending (debug / teach ranked targets).
+    ProbeUnderCursor() {
+        if !UiaCore.Ensure() {
+            this._Status(UiaCore.LastError, "err")
+            return ""
+        }
+        MouseGetPos(&sx, &sy)
+        desc := UiaCore.ElementFromScreenPoint(sx, sy)
+        if desc = "" {
+            this._Status("Probe: no UIA element under cursor", "err")
+            return ""
+        }
+        this._Status("Probe: " (desc.Has("AutomationId") && desc["AutomationId"] != "" ? "AutomationId=" desc["AutomationId"] : desc["ControlTypeName"] " '" desc["Name"] "'"), "ok")
+        return desc
     }
 
     _Emit(step) {

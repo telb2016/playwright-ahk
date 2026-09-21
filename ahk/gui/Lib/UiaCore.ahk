@@ -523,14 +523,36 @@ class UiaCore {
         return false
     }
 
-    static SoftClickRelative(hwnd, relX, relY) {
+    static InvokeRightClick(el) {
+        if !IsObject(el)
+            return false
+        try {
+            cp := UiaCore.Prop(el, UiaCore.P_ClickablePoint)
+            if IsObject(cp) {
+                Click(cp[1] " " cp[2] " Right")
+                return true
+            }
+        }
+        try {
+            rect := UiaCore.Prop(el, UiaCore.P_BoundingRectangle)
+            if rect is Array || (IsObject(rect) && rect.HasProp("Length") && rect.Length = 4) {
+                x := Round((rect[1] + rect[3]) / 2)
+                y := Round((rect[2] + rect[4]) / 2)
+                Click(x " " y " Right")
+                return true
+            }
+        }
+        return false
+    }
+
+    static SoftClickRelative(hwnd, relX, relY, right := false) {
         if !hwnd
             return false
         try {
             WinGetPos(&wx, &wy, &ww, &wh, "ahk_id " hwnd)
             x := wx + Round(relX * ww)
             y := wy + Round(relY * wh)
-            Click(x " " y)
+            Click(x " " y (right ? " Right" : ""))
             return true
         }
         return false

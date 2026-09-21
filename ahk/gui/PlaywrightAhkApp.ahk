@@ -259,7 +259,7 @@ BuildGui() {
     global Catalog, Tab1Ctrls, Tab2Ctrls, Tab3Ctrls, ChipBtns, EdChipFilter, LblNoChipMatch
     global BtnTab1, BtnTab2, BtnTab3, WipeGui, WipeLbl
     global Desktop, EdDesktopJson, EdDesktopLog, EdDesktopInstr
-    global BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskSend, BtnDeskClear
+    global BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskSend, BtnDeskClear, BtnDeskProbe
 
     AppGui := Gui("+Resize +MinSize1000x640", "Playwright AHK — Overnight GUI")
     Theme.StyleGui(AppGui)
@@ -499,9 +499,12 @@ BuildGui() {
     BtnDeskSave := AppGui.Add("Button", "x" bx " y248 w200 h28", "Save to recordings/windows")
     Theme.StyleButton(BtnDeskSave)
     BtnDeskSave.OnEvent("Click", OnDesktopSave)
-    BtnDeskClear := AppGui.Add("Button", "x" bx " y286 w200 h28", "Clear steps")
+    BtnDeskClear := AppGui.Add("Button", "x" bx " y286 w96 h28", "Clear")
     Theme.StyleButton(BtnDeskClear)
     BtnDeskClear.OnEvent("Click", OnDesktopClear)
+    BtnDeskProbe := AppGui.Add("Button", "x" (bx + 104) " y286 w96 h28", "Probe")
+    Theme.StyleButton(BtnDeskProbe)
+    BtnDeskProbe.OnEvent("Click", OnDesktopProbe)
 
     t3InstrLbl := AppGui.Add("Text", "x" bx " y324 w200", "Copilot instruction")
     EdDesktopInstr := AppGui.Add("Edit", "x" bx " y344 w200 h60 Multi WantReturn VScroll",
@@ -516,7 +519,7 @@ BuildGui() {
     Theme.StyleEdit(EdDesktopLog)
 
     Tab3Ctrls := [t3Banner, t3Hint, t3StepsLbl, EdDesktopJson
-        , BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskClear
+        , BtnDeskRecord, BtnDeskStop, BtnDeskPlay, BtnDeskVerify, BtnDeskSave, BtnDeskClear, BtnDeskProbe
         , t3InstrLbl, EdDesktopInstr, BtnDeskSend, t3LogLbl, EdDesktopLog]
 
     StatusBar := AppGui.Add("Text", "x10 y675 w960 h24 +0x100", " Ready")  ; SS_NOTIFY for click
@@ -1696,6 +1699,31 @@ OnDesktopSave(*) {
     path := Desktop.Save(RepoRoot)
     if path != ""
         try TrayTip("Desktop UIA", "Saved`n" path, "Iconi")
+}
+
+OnDesktopProbe(*) {
+    global Desktop, EdDesktopLog
+    desc := Desktop.ProbeUnderCursor()
+    if desc = ""
+        return
+    ; Show ranked targets in log for QC
+    try {
+        lines := "PROBE ranked targets:`n"
+        if desc.Has("Targets") {
+            for t in desc["Targets"] {
+                strat := t.Has("strategy") ? t["strategy"] : "?"
+                lines .= "  rank " (t.Has("rank") ? t["rank"] : "?") " — " strat
+                if t.Has("AutomationId")
+                    lines .= " id=" t["AutomationId"]
+                if t.Has("Name")
+                    lines .= " name=" t["Name"]
+                lines .= "`n"
+            }
+        }
+        win := desc.Has("Window") ? desc["Window"] : Map()
+        lines .= "window class=" (win.Has("Class") ? win["Class"] : "") " proc=" (win.Has("ProcessName") ? win["ProcessName"] : "") "`n"
+        EdDesktopLog.Value := lines
+    }
 }
 
 OnDesktopClear(*) {
